@@ -1,0 +1,40 @@
+body.compact-view .MuiToolbar-root {
+  min-height: 52px;
+}
+
+body.compact-view .MuiListItemButton-root {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+body.compact-view .MuiListItemIcon-root {
+  min-width: 34px;
+}
+
+body.compact-view .MuiTableCell-root {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+body.compact-view .MuiTablePagination-toolbar {
+  min-height: 44px;
+}
+
+body.compact-view .MuiChip-root {
+  height: 24px;
+}
+
+body.compact-view .MuiDataGrid-cell,
+body.compact-view .MuiDataGrid-columnHeader {
+  min-height: 38px !important;
+  max-height: 38px !important;
+}
+
+body.reduced-animations *,
+body.reduced-animations *::before,
+body.reduced-animations *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}

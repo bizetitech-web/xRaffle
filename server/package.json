@@ -1,0 +1,33 @@
+{
+  "name": "xraffle-server",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "migrate": "node scripts/migrate.js",
+    "verify:db": "node scripts/verifyReadiness.js",
+    "reset:dev": "node scripts/resetDevDatabase.js --confirm RESET",
+    "seed:org": "node scripts/createOrganization.js",
+    "seed:super-admin": "node scripts/createSuperAdmin.js",
+    "reset:password": "node scripts/updateUserPassword.js",
+    "test:integration": "node --test tests/integration/**/*.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.3.1",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "jwt-decode": "^4.0.0",
+    "mysql2": "^3.6.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/uuid": "^10.0.0",
+    "nodemon": "^3.0.1"
+  }
+}
