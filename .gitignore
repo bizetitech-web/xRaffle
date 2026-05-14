@@ -1,9 +1,12 @@
 node_modules/
 client/node_modules/
 server/node_modules/
+auth-repo.git/
+client/dist/
 client/test-results/
 client/playwright-report/
 coverage/
+*.zip
 *.log
 .env
 server/.env
