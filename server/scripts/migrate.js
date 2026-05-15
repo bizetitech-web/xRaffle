@@ -7,7 +7,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const REQUIRED_TABLES = [
-  'organizations',
+  'hotel_companies',
+  'hotel_branches',
   'users',
   'roles',
   'permissions',
@@ -17,7 +18,19 @@ const REQUIRED_TABLES = [
 ];
 
 const REQUIRED_ROLES = ['super_admin', 'org_admin', 'manager', 'viewer'];
-const REQUIRED_PERMISSIONS = ['MANAGE_USERS', 'MANAGE_ROLES', 'MANAGE_ORGANIZATIONS', 'VIEW_AUDIT_LOGS'];
+const REQUIRED_PERMISSIONS = ['MANAGE_USERS', 'MANAGE_ROLES', 'MANAGE_HOTELS', 'VIEW_AUDIT_LOGS'];
+const REQUIRED_ROLE_IDS = [
+  '79a386a5-207b-11f1-89b6-a4e078b831cc',
+  '79a386a6-207b-11f1-89b6-a4e078b831cc',
+  '79a386a7-207b-11f1-89b6-a4e078b831cc',
+  '79a386a8-207b-11f1-89b6-a4e078b831cc',
+];
+const REQUIRED_PERMISSION_IDS = [
+  '89a386a1-207b-11f1-89b6-a4e078b831cc',
+  '89a386a2-207b-11f1-89b6-a4e078b831cc',
+  '89a386a3-207b-11f1-89b6-a4e078b831cc',
+  '89a386a4-207b-11f1-89b6-a4e078b831cc',
+];
 
 function normalizeRoleName(name) {
   return String(name || '')
@@ -26,9 +39,162 @@ function normalizeRoleName(name) {
     .replace(/[_\-\s]+/g, '');
 }
 
+async function tableExists(tableName) {
+  const [rows] = await pool.query(
+    `SELECT 1
+     FROM INFORMATION_SCHEMA.TABLES
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+     LIMIT 1`,
+    [process.env.DB_NAME, tableName]
+  );
+
+  return rows.length > 0;
+}
+
+async function columnExists(tableName, columnName) {
+  const [rows] = await pool.query(
+    `SELECT 1
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [process.env.DB_NAME, tableName, columnName]
+  );
+
+  return rows.length > 0;
+}
+
+async function indexExists(tableName, indexName) {
+  const [rows] = await pool.query(
+    `SELECT 1
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?
+     LIMIT 1`,
+    [process.env.DB_NAME, tableName, indexName]
+  );
+
+  return rows.length > 0;
+}
+
+async function foreignKeyExists(tableName, constraintName) {
+  const [rows] = await pool.query(
+    `SELECT 1
+     FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?
+     LIMIT 1`,
+    [process.env.DB_NAME, tableName, constraintName]
+  );
+
+  return rows.length > 0;
+}
+
+async function applyLegacyOrganizationRename() {
+  const hasLegacyOrganizations = await tableExists('organizations');
+  const hasHotelCompanies = await tableExists('hotel_companies');
+
+  if (hasLegacyOrganizations && !hasHotelCompanies) {
+    console.log('🔁 Renaming legacy table organizations -> hotel_companies');
+    await pool.query('RENAME TABLE organizations TO hotel_companies');
+  }
+
+  const hasUsersTable = await tableExists('users');
+  if (hasUsersTable) {
+    const hasLegacyOrgId = await columnExists('users', 'organization_id');
+    const hasHotelCompanyId = await columnExists('users', 'hotel_company_id');
+
+    if (hasLegacyOrgId && !hasHotelCompanyId) {
+      console.log('🔁 Renaming users.organization_id -> users.hotel_company_id');
+      await pool.query(
+        'ALTER TABLE users CHANGE COLUMN organization_id hotel_company_id CHAR(36) NOT NULL'
+      );
+    }
+  }
+
+  const hasAuditLogsTable = await tableExists('audit_logs');
+  if (hasAuditLogsTable) {
+    const hasLegacyOrgId = await columnExists('audit_logs', 'organization_id');
+    const hasHotelCompanyId = await columnExists('audit_logs', 'hotel_company_id');
+
+    if (hasLegacyOrgId && !hasHotelCompanyId) {
+      console.log('🔁 Renaming audit_logs.organization_id -> audit_logs.hotel_company_id');
+      await pool.query(
+        'ALTER TABLE audit_logs CHANGE COLUMN organization_id hotel_company_id CHAR(36) NULL'
+      );
+    }
+  }
+}
+
+async function applyLegacyPermissionRename() {
+  const [legacyPermissionRows] = await pool.query(
+    'SELECT id, name FROM permissions WHERE name IN (?, ?)',
+    ['MANAGE_ORGANIZATIONS', 'MANAGE_HOTEL']
+  );
+
+  for (const row of legacyPermissionRows) {
+    console.log(`🔁 Renaming legacy permission ${row.name} -> MANAGE_HOTELS`);
+    await pool.query(
+      'UPDATE permissions SET name = ? WHERE id = ?',
+      ['MANAGE_HOTELS', row.id]
+    );
+  }
+}
+
+async function applyHotelCompanyColumnCleanup() {
+  const hasHotelCompanies = await tableExists('hotel_companies');
+  if (!hasHotelCompanies) {
+    return;
+  }
+
+  const removableColumns = ['code', 'city', 'state', 'country', 'postal_code', 'address'];
+  for (const column of removableColumns) {
+    if (await columnExists('hotel_companies', column)) {
+      console.log(`🔁 Dropping deprecated hotel_companies.${column}`);
+      await pool.query(`ALTER TABLE hotel_companies DROP COLUMN ${column}`);
+    }
+  }
+
+  if (await indexExists('hotel_companies', 'uq_hotel_companies_code')) {
+    console.log('🔁 Dropping deprecated unique index uq_hotel_companies_code');
+    await pool.query('ALTER TABLE hotel_companies DROP INDEX uq_hotel_companies_code');
+  }
+
+  if (!(await indexExists('hotel_companies', 'uq_hotel_companies_name'))) {
+    console.log('🔁 Ensuring unique index uq_hotel_companies_name');
+    await pool.query('ALTER TABLE hotel_companies ADD UNIQUE KEY uq_hotel_companies_name (name)');
+  }
+}
+
+async function applyUsersBranchLink() {
+  const hasUsers = await tableExists('users');
+  const hasBranches = await tableExists('hotel_branches');
+
+  if (!hasUsers || !hasBranches) {
+    return;
+  }
+
+  if (!(await columnExists('users', 'branch_id'))) {
+    console.log('🔁 Adding users.branch_id');
+    await pool.query('ALTER TABLE users ADD COLUMN branch_id CHAR(36) NULL AFTER hotel_company_id');
+  }
+
+  if (!(await indexExists('users', 'idx_users_branch_id'))) {
+    console.log('🔁 Adding index idx_users_branch_id');
+    await pool.query('ALTER TABLE users ADD INDEX idx_users_branch_id (branch_id)');
+  }
+
+  if (!(await foreignKeyExists('users', 'fk_users_branch'))) {
+    console.log('🔁 Adding foreign key fk_users_branch');
+    await pool.query(
+      `ALTER TABLE users
+       ADD CONSTRAINT fk_users_branch
+       FOREIGN KEY (branch_id) REFERENCES hotel_branches(id)
+       ON DELETE SET NULL`
+    );
+  }
+}
+
 async function runSanityChecks() {
-  const rolePlaceholders = REQUIRED_ROLES.map(() => '?').join(', ');
-  const permissionPlaceholders = REQUIRED_PERMISSIONS.map(() => '?').join(', ');
+  const roleIdPlaceholders = REQUIRED_ROLE_IDS.map(() => '?').join(', ');
+  const permissionIdPlaceholders = REQUIRED_PERMISSION_IDS.map(() => '?').join(', ');
 
   const [tableRows] = await pool.query(
     `SELECT TABLE_NAME
@@ -44,23 +210,23 @@ async function runSanityChecks() {
   }
 
   const [roleRows] = await pool.query(
-    `SELECT name FROM roles WHERE name IN (${rolePlaceholders})`,
-    REQUIRED_ROLES
+    `SELECT id FROM roles WHERE id IN (${roleIdPlaceholders})`,
+    REQUIRED_ROLE_IDS
   );
-  const existingRoles = new Set(roleRows.map((row) => normalizeRoleName(row.name)));
-  const missingRoles = REQUIRED_ROLES.filter((role) => !existingRoles.has(normalizeRoleName(role)));
+  const existingRoleIds = new Set(roleRows.map((row) => row.id));
+  const missingRoles = REQUIRED_ROLE_IDS.filter((id) => !existingRoleIds.has(id));
   if (missingRoles.length > 0) {
-    throw new Error(`Seed sanity check failed: missing required roles: ${missingRoles.join(', ')}`);
+    throw new Error(`Seed sanity check failed: missing required role IDs: ${missingRoles.join(', ')}`);
   }
 
   const [permissionRows] = await pool.query(
-    `SELECT name FROM permissions WHERE name IN (${permissionPlaceholders})`,
-    REQUIRED_PERMISSIONS
+    `SELECT id FROM permissions WHERE id IN (${permissionIdPlaceholders})`,
+    REQUIRED_PERMISSION_IDS
   );
-  const existingPermissions = new Set(permissionRows.map((row) => row.name));
-  const missingPermissions = REQUIRED_PERMISSIONS.filter((permission) => !existingPermissions.has(permission));
+  const existingPermissionIds = new Set(permissionRows.map((row) => row.id));
+  const missingPermissions = REQUIRED_PERMISSION_IDS.filter((id) => !existingPermissionIds.has(id));
   if (missingPermissions.length > 0) {
-    throw new Error(`Seed sanity check failed: missing required permissions: ${missingPermissions.join(', ')}`);
+    throw new Error(`Seed sanity check failed: missing required permission IDs: ${missingPermissions.join(', ')}`);
   }
 
   console.log('✅ Migration sanity checks passed (tables, roles, permissions).');
@@ -71,6 +237,11 @@ async function runMigration() {
 
   try {
     console.log('🔄 Running database migration...');
+
+    await applyLegacyOrganizationRename();
+    await applyLegacyPermissionRename();
+    await applyHotelCompanyColumnCleanup();
+    await applyUsersBranchLink();
 
     const migrationFiles = [
       '../database/user_management_schema.sql',

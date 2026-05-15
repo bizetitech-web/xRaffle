@@ -1,5 +1,24 @@
 import pool from '../config/database.js';
 
+const PERMISSION_ALIASES = {
+  MANAGE_HOTELS: ['MANAGE_HOTELS', 'MANAGE_ORGANIZATIONS'],
+  MANAGE_ORGANIZATIONS: ['MANAGE_ORGANIZATIONS', 'MANAGE_HOTELS'],
+};
+
+function expandPermissionAliases(permissionNames = []) {
+  const expanded = new Set();
+
+  for (const name of permissionNames) {
+    expanded.add(name);
+    const aliases = PERMISSION_ALIASES[name] || [];
+    for (const alias of aliases) {
+      expanded.add(alias);
+    }
+  }
+
+  return expanded;
+}
+
 /**
  * Middleware to check if user has required permissions
  * @param {string[]} requiredPermissions - Array of permission names needed
@@ -29,10 +48,11 @@ export const hasPermission = (requiredPermissions = []) => {
       );
 
       const userPermissions = permissions.map(p => p.name);
+      const effectivePermissions = expandPermissionAliases(userPermissions);
       
       // Check if user has all required permissions
       const hasAllPermissions = requiredPermissions.every(perm => 
-        userPermissions.includes(perm)
+        effectivePermissions.has(perm)
       );
 
       if (!hasAllPermissions) {
@@ -78,8 +98,9 @@ export const hasAnyPermission = (requiredPermissions = []) => {
       );
 
       const userPermissions = permissions.map(p => p.name);
+      const effectivePermissions = expandPermissionAliases(userPermissions);
       const hasAtLeastOnePermission = requiredPermissions.some(perm =>
-        userPermissions.includes(perm)
+        effectivePermissions.has(perm)
       );
 
       if (!hasAtLeastOnePermission) {
@@ -156,7 +177,7 @@ export const canAccessOrganization = async (req, res, next) => {
 
     // Get user's organization and role
     const [rows] = await pool.query(
-      `SELECT u.organization_id, r.name as role_name, r.level as role_level
+      `SELECT u.hotel_company_id, r.name as role_name, r.level as role_level
        FROM users u
        JOIN user_roles ur ON u.id = ur.user_id
        JOIN roles r ON r.id = ur.role_id
@@ -168,10 +189,10 @@ export const canAccessOrganization = async (req, res, next) => {
       return res.status(403).json({ error: 'User not found' });
     }
 
-    const { organization_id: userOrgId, role_name, role_level } = rows[0];
+    const { hotel_company_id: userOrgId, role_name, role_level } = rows[0];
 
     // Store organization ID in request for later use
-    req.organizationId = userOrgId;
+    req.hotelCompanyId = userOrgId;
     req.userRole = {
       name: role_name,
       level: role_level
@@ -192,7 +213,7 @@ export const canAccessSpecificOrganization = (targetOrgId) => {
   return async (req, res, next) => {
     try {
       const userId = req.user?.sub;
-      const orgId = targetOrgId || req.params.organizationId || req.body.organizationId || req.query.organizationId;
+      const orgId = targetOrgId || req.params.hotelCompanyId || req.body.hotelCompanyId || req.query.hotelCompanyId;
       
       if (!userId) {
         return res.status(401).json({ error: 'Unauthorized' });
@@ -204,7 +225,7 @@ export const canAccessSpecificOrganization = (targetOrgId) => {
 
       // Get user's organization and role
       const [rows] = await pool.query(
-        `SELECT u.organization_id, r.level as role_level
+        `SELECT u.hotel_company_id, r.level as role_level
          FROM users u
          JOIN user_roles ur ON u.id = ur.user_id
          JOIN roles r ON r.id = ur.role_id
@@ -216,7 +237,7 @@ export const canAccessSpecificOrganization = (targetOrgId) => {
         return res.status(403).json({ error: 'User not found' });
       }
 
-      const { organization_id: userOrgId, role_level } = rows[0];
+      const { hotel_company_id: userOrgId, role_level } = rows[0];
 
       // Super admin (level 1) can access any organization
       if (role_level === 1) {
@@ -225,7 +246,7 @@ export const canAccessSpecificOrganization = (targetOrgId) => {
 
       // Regular users can only access their own organization
       if (orgId && orgId !== userOrgId) {
-        return res.status(403).json({ error: 'Cannot access data from other organizations' });
+        return res.status(403).json({ error: 'Cannot access data from other hotel_companies' });
       }
 
       next();

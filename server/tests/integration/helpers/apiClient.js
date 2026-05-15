@@ -50,25 +50,23 @@ export async function loginAsAdmin() {
 
 export async function createOrganization(token) {
   const suffix = uniqueSuffix();
-  const code = `org-${suffix}`;
   const name = `Integration Org ${suffix}`;
 
-  const { response, json } = await apiRequest('/admin/organizations', {
+  const { response, json } = await apiRequest('/admin/hotel_companies', {
     method: 'POST',
     token,
     body: {
       name,
-      code,
       email: `org-${suffix}@example.com`,
       status: 'active',
     },
   });
 
-  if (!response.ok || !json?.organizationId) {
+  if (!response.ok || !json?.hotelCompanyId) {
     throw new Error(`Organization create failed (${response.status}): ${JSON.stringify(json)}`);
   }
 
-  return { organizationId: json.organizationId, name, code };
+  return { hotelCompanyId: json.hotelCompanyId, name };
 }
 
 export async function getRoleIdByName(token, roleName) {
@@ -87,7 +85,7 @@ export async function getRoleIdByName(token, roleName) {
 }
 
 export async function createUser(token, {
-  organizationId,
+  hotelCompanyId,
   roleId,
   firstName = 'Integration',
   lastName = 'User',
@@ -105,7 +103,7 @@ export async function createUser(token, {
       firstName,
       lastName,
       roleId,
-      organizationId,
+      hotelCompanyId,
     },
   });
 

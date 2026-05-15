@@ -21,7 +21,7 @@ test('non-super admin cannot list users from another organization', { skip: !has
   const viewerRoleId = await getRoleIdByName(token, 'viewer');
 
   const orgAdmin = await createUser(token, {
-    organizationId: orgA.organizationId,
+    hotelCompanyId: orgA.hotelCompanyId,
     roleId: orgAdminRoleId,
     firstName: 'Boundary',
     lastName: 'OrgAdmin',
@@ -29,7 +29,7 @@ test('non-super admin cannot list users from another organization', { skip: !has
   });
 
   const otherOrgUser = await createUser(token, {
-    organizationId: orgB.organizationId,
+    hotelCompanyId: orgB.hotelCompanyId,
     roleId: viewerRoleId,
     firstName: 'Boundary',
     lastName: 'OtherOrgUser',
@@ -37,7 +37,7 @@ test('non-super admin cannot list users from another organization', { skip: !has
 
   const orgAdminLogin = await loginWithCredentials(orgAdmin.email, orgAdmin.password);
 
-  const listing = await apiRequest(`/admin/users?organizationId=${orgB.organizationId}`, {
+  const listing = await apiRequest(`/admin/users?hotelCompanyId=${orgB.hotelCompanyId}`, {
     token: orgAdminLogin.token,
   });
 
@@ -45,8 +45,8 @@ test('non-super admin cannot list users from another organization', { skip: !has
   assert.ok(Array.isArray(listing.json), 'Expected user listing array');
 
   const hasCrossOrgUser = listing.json.some((user) => user.id === otherOrgUser.userId);
-  assert.equal(hasCrossOrgUser, false, 'Expected listing to exclude users from other organizations');
+  assert.equal(hasCrossOrgUser, false, 'Expected listing to exclude users from other hotel_companies');
 
-  const allFromOwnOrg = listing.json.every((user) => user.organization_id === orgA.organizationId);
+  const allFromOwnOrg = listing.json.every((user) => user.hotel_company_id === orgA.hotelCompanyId);
   assert.equal(allFromOwnOrg, true, 'Expected listing rows to be restricted to requester organization');
 });

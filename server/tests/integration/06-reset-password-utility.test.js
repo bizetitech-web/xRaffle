@@ -12,9 +12,9 @@ import {
 
 const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_PASSWORD);
 
-function runResetPasswordScript({ email, password, organizationId }) {
+function runResetPasswordScript({ email, password, hotelCompanyId }) {
   return new Promise((resolve, reject) => {
-    const args = ['scripts/updateUserPassword.js', '--email', email, '--password', password, '--organizationId', organizationId];
+    const args = ['scripts/updateUserPassword.js', '--email', email, '--password', password, '--hotelCompanyId', hotelCompanyId];
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
       stdio: 'pipe',
@@ -41,14 +41,14 @@ function runResetPasswordScript({ email, password, organizationId }) {
 
 test('password reset utility updates login credentials for target user', { skip: !hasCreds }, async () => {
   const { token } = await loginAsAdmin();
-  const { organizationId } = await createOrganization(token);
+  const { hotelCompanyId } = await createOrganization(token);
   const roleId = await getRoleIdByName(token, 'viewer');
 
   const initialPassword = 'InitPass123!';
   const newPassword = 'ResetPass123!';
 
   const created = await createUser(token, {
-    organizationId,
+    hotelCompanyId,
     roleId,
     firstName: 'Reset',
     lastName: 'Target',
@@ -64,7 +64,7 @@ test('password reset utility updates login credentials for target user', { skip:
   await runResetPasswordScript({
     email: created.email,
     password: newPassword,
-    organizationId,
+    hotelCompanyId,
   });
 
   const oldLoginAfterReset = await apiRequest('/auth/login', {

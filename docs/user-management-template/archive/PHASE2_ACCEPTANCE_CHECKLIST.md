@@ -83,7 +83,7 @@ Use this checklist as pass/fail criteria. Do not proceed to destructive cleanup 
 - 2026-05-03: Unused public registration UI component removed; /register remains a compatibility redirect to /login.
 - 2026-05-03: Removed obsolete role helpers tied to removed modules from AuthContext (inventory/sales/purchasing/accountant/auditor).
 - 2026-05-03: Minimized AuthContext public API by removing unused generic helpers (hasAnyPermission/hasAllPermissions/isOrgAdmin/isManager/isViewer/getRoleName).
-- 2026-05-03: Migrated admin route guards to permission-based checks (MANAGE_USERS, MANAGE_ROLES, MANAGE_ORGANIZATIONS) aligned with starter seed permissions.
+- 2026-05-03: Migrated admin route guards to permission-based checks (MANAGE_USERS, MANAGE_ROLES, MANAGE_HOTELS) aligned with starter seed permissions.
 - 2026-05-03: Simplified RoleGuard contract by removing unused role-name (`allowedRoles`) gating logic; guard now relies on minimumLevel and requiredPermissions.
 - 2026-05-03: Replaced final route-level minimumLevel gate (`/settings`) with permission-based guard (`MANAGE_USERS`) and removed minimumLevel handling from RoleGuard.
 - 2026-05-03: Migrated sidebar visibility to permission-only checks, removed `hasMinimumLevel` from AuthContext, and removed stale Tasks navigation from the starter sidebar.

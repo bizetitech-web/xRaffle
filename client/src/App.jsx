@@ -16,6 +16,7 @@ import UserManagement from './pages/admin/UserManagement';
 import RoleManagement from './pages/admin/RoleManagement';
 import Permissions from './pages/admin/Permissions';
 import OrganizationSettings from './pages/admin/OrganizationSettings';
+import BranchManagement from './pages/admin/BranchManagement';
 
 function App() {
   return (
@@ -94,9 +95,19 @@ function App() {
             
             <Route path="/admin/organization" element={
               <PrivateRoute>
-                <RoleGuard requiredPermissions={['MANAGE_ORGANIZATIONS']}>
+                <RoleGuard requiredPermissions={['MANAGE_HOTELS']}>
                   <Layout>
                     <OrganizationSettings />
+                  </Layout>
+                </RoleGuard>
+              </PrivateRoute>
+            } />
+
+            <Route path="/admin/branches" element={
+              <PrivateRoute>
+                <RoleGuard requiredPermissions={['MANAGE_HOTELS']}>
+                  <Layout>
+                    <BranchManagement />
                   </Layout>
                 </RoleGuard>
               </PrivateRoute>

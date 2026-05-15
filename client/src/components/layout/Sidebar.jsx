@@ -66,10 +66,16 @@ const Sidebar = ({ open, variant, onClose }) => {
       requiredPermissions: ['MANAGE_ROLES']
     },
     { 
-      text: 'Organization', 
+      text: 'Hotels', 
       icon: <BusinessIcon />, 
       path: '/admin/organization',
-      requiredPermissions: ['MANAGE_ORGANIZATIONS']
+      requiredPermissions: ['MANAGE_HOTELS']
+    },
+    {
+      text: 'Hotel Branches',
+      icon: <BusinessIcon />,
+      path: '/admin/branches',
+      requiredPermissions: ['MANAGE_HOTELS']
     },
   ];
 

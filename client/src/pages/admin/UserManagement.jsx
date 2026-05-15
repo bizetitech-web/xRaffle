@@ -57,12 +57,14 @@ const UserManagement = () => {
     firstName: '',
     lastName: '',
     roleId: '',
-    organizationId: '', // Add this field
+    hotelCompanyId: '', // Add this field
+    branchId: '',
     phone: '',
     isActive: true,
   });
   const [roles, setRoles] = useState([]);
-  const [organizations, setOrganizations] = useState([]);
+  const [hotel_companies, setOrganizations] = useState([]);
+  const [branches, setBranches] = useState([]);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [formErrors, setFormErrors] = useState({});
@@ -73,8 +75,22 @@ const UserManagement = () => {
     fetchRoles();
     if (isSuperAdmin()) {
       fetchOrganizations();
+    } else {
+      fetchBranches(currentUser?.organization?.id || '');
     }
   }, []);
+
+  useEffect(() => {
+    if (!openDialog) {
+      return;
+    }
+
+    const targetCompanyId = isSuperAdmin()
+      ? formData.hotelCompanyId
+      : (currentUser?.organization?.id || '');
+
+    fetchBranches(targetCompanyId);
+  }, [openDialog, formData.hotelCompanyId]);
 
   const fetchUsers = async () => {
     try {
@@ -101,10 +117,21 @@ const UserManagement = () => {
 
   const fetchOrganizations = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/admin/organizations`);
+      const response = await axios.get(`${API_BASE}/admin/hotel_companies`);
       setOrganizations(response.data);
     } catch (err) {
-      console.error('Failed to fetch organizations:', err);
+      console.error('Failed to fetch hotel_companies:', err);
+    }
+  };
+
+  const fetchBranches = async (companyId) => {
+    try {
+      const query = companyId ? `?companyId=${companyId}` : '';
+      const response = await axios.get(`${API_BASE}/admin/hotel_branches${query}`);
+      setBranches(response.data || []);
+    } catch (err) {
+      console.error('Failed to fetch branches:', err);
+      setBranches([]);
     }
   };
 
@@ -117,7 +144,8 @@ const UserManagement = () => {
         firstName: user.first_name || '',
         lastName: user.last_name || '',
         roleId: user.role_id || '',
-        organizationId: user.organization_id || (isSuperAdmin() ? '' : currentUser?.organization?.id),
+        hotelCompanyId: user.hotel_company_id || (isSuperAdmin() ? '' : currentUser?.organization?.id),
+        branchId: user.branch_id || '',
         phone: user.phone || '',
         isActive: user.is_active === 1 || user.is_active === true,
       });
@@ -129,7 +157,8 @@ const UserManagement = () => {
         firstName: '',
         lastName: '',
         roleId: '',
-        organizationId: isSuperAdmin() ? '' : (currentUser?.organization?.id || ''),
+        hotelCompanyId: isSuperAdmin() ? '' : (currentUser?.organization?.id || ''),
+        branchId: '',
         phone: '',
         isActive: true,
       });
@@ -145,6 +174,25 @@ const UserManagement = () => {
 
   const handleChange = (e) => {
     const { name, value, checked, type } = e.target;
+
+    if (name === 'hotelCompanyId') {
+      setFormData(prev => ({
+        ...prev,
+        hotelCompanyId: value,
+        branchId: '',
+      }));
+
+      if (!value) {
+        setBranches([]);
+      }
+
+      if (formErrors[name]) {
+        setFormErrors(prev => ({ ...prev, [name]: '' }));
+      }
+
+      return;
+    }
+
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
@@ -177,8 +225,8 @@ const UserManagement = () => {
     if (!formData.roleId) {
       errors.roleId = 'Role is required';
     }
-    if (!formData.organizationId && isSuperAdmin()) {
-      errors.organizationId = 'Organization is required';
+    if (!formData.hotelCompanyId && isSuperAdmin()) {
+      errors.hotelCompanyId = 'Hotel is required';
     }
 
     return errors;
@@ -201,11 +249,12 @@ const UserManagement = () => {
         roleId: formData.roleId,
         phone: formData.phone || null,
         isActive: formData.isActive,
+        branchId: formData.branchId || null,
       };
 
-      // Only include organizationId for super admin or if explicitly set
-      if (isSuperAdmin() && formData.organizationId) {
-        payload.organizationId = formData.organizationId;
+      // Only include hotelCompanyId for super admin or if explicitly set
+      if (isSuperAdmin() && formData.hotelCompanyId) {
+        payload.hotelCompanyId = formData.hotelCompanyId;
       }
 
       // Only include password for new users or if changed
@@ -284,12 +333,22 @@ const UserManagement = () => {
       ),
     },
     {
-      field: 'organization_name',
-      headerName: 'Organization',
+      field: 'hotel_company_name',
+      headerName: 'Hotel',
       width: 180,
       renderCell: (params) => (
         <Typography variant="body2">
           {params.value || 'N/A'}
+        </Typography>
+      ),
+    },
+    {
+      field: 'branch_name',
+      headerName: 'Branch',
+      width: 180,
+      renderCell: (params) => (
+        <Typography variant="body2">
+          {params.value || 'Unassigned'}
         </Typography>
       ),
     },
@@ -382,7 +441,8 @@ const UserManagement = () => {
     user.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.organization_name?.toLowerCase().includes(searchTerm.toLowerCase())
+    user.hotel_company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    user.branch_name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading && users.length === 0) {
@@ -480,7 +540,7 @@ const UserManagement = () => {
         <TextField
           fullWidth
           data-testid="user-search-input"
-          placeholder="Search users by name, email, or organization..."
+          placeholder="Search users by name, email, or hotel..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           InputProps={{
@@ -547,35 +607,65 @@ const UserManagement = () => {
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
-            {/* Organization Selection (Super Admin only) */}
+            {/* Hotel Selection (Super Admin only) */}
             {isSuperAdmin() && (
               <Grid item xs={12}>
-                <FormControl fullWidth error={!!formErrors.organizationId}>
-                  <InputLabel sx={{ color: 'text.secondary' }}>Organization *</InputLabel>
+                <FormControl fullWidth error={!!formErrors.hotelCompanyId}>
+                  <InputLabel sx={{ color: 'text.secondary' }}>Hotel *</InputLabel>
                   <Select
-                    name="organizationId"
+                    name="hotelCompanyId"
                     data-testid="user-organization-select"
-                    value={formData.organizationId}
+                    value={formData.hotelCompanyId}
                     onChange={handleChange}
-                    label="Organization *"
+                    label="Hotel *"
                     sx={{
                       color: 'text.primary',
                       bgcolor: 'background.default',
                       '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
                     }}
                   >
-                    {organizations.map((org) => (
+                    {hotel_companies.map((org) => (
                       <MenuItem key={org.id} value={org.id}>
-                        {org.name} ({org.code})
+                        {org.name}
                       </MenuItem>
                     ))}
                   </Select>
-                  {formErrors.organizationId && (
-                    <FormHelperText>{formErrors.organizationId}</FormHelperText>
+                  {formErrors.hotelCompanyId && (
+                    <FormHelperText>{formErrors.hotelCompanyId}</FormHelperText>
                   )}
                 </FormControl>
               </Grid>
             )}
+
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel sx={{ color: 'text.secondary' }}>Branch</InputLabel>
+                <Select
+                  name="branchId"
+                  value={formData.branchId}
+                  onChange={handleChange}
+                  label="Branch"
+                  disabled={(isSuperAdmin() && !formData.hotelCompanyId) || branches.length === 0}
+                  sx={{
+                    color: 'text.primary',
+                    bgcolor: 'background.default',
+                    '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+                  }}
+                >
+                  <MenuItem value="">
+                    <em>Unassigned</em>
+                  </MenuItem>
+                  {branches.map((branch) => (
+                    <MenuItem key={branch.id} value={branch.id}>
+                      {branch.name} ({branch.branch_code})
+                    </MenuItem>
+                  ))}
+                </Select>
+                {isSuperAdmin() && !formData.hotelCompanyId && (
+                  <FormHelperText>Select a hotel first</FormHelperText>
+                )}
+              </FormControl>
+            </Grid>
 
             {/* First Name */}
             <Grid item xs={12} sm={6}>

@@ -3,7 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import pool from '../config/database.js';
 
-const CODE_REGEX = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseArgs(argv) {
@@ -32,51 +31,33 @@ function normalizeName(value) {
   return (value || '').trim().replace(/\s+/g, ' ');
 }
 
-function normalizeCode(value) {
-  return (value || '').trim().toLowerCase();
-}
-
 function normalizeOptional(value) {
   const normalized = (value || '').trim();
   return normalized || null;
 }
 
-function validateInputs({ name, code, email }) {
+function validateInputs({ name, email }) {
   if (!name) {
-    throw new Error('Organization name is required. Provide --name or ORGANIZATION_NAME.');
+    throw new Error('Hotel name is required. Provide --name or HOTEL_NAME (or legacy ORGANIZATION_NAME).');
   }
 
   if (name.length < 3) {
-    throw new Error('Organization name must be at least 3 characters.');
-  }
-
-  if (!code) {
-    throw new Error('Organization code is required. Provide --code or ORGANIZATION_CODE.');
-  }
-
-  if (!CODE_REGEX.test(code)) {
-    throw new Error('Organization code must use lowercase letters, numbers, and hyphens (3-50 chars, no leading/trailing hyphen).');
+    throw new Error('Hotel name must be at least 3 characters.');
   }
 
   if (email && !EMAIL_REGEX.test(email)) {
-    throw new Error('Organization email is invalid. Provide a valid email or omit --email.');
+    throw new Error('Hotel email is invalid. Provide a valid email or omit --email.');
   }
 }
 
 export async function run() {
   const args = parseArgs(process.argv.slice(2));
 
-  const name = normalizeName(args.name || process.env.ORGANIZATION_NAME || '');
-  const code = normalizeCode(args.code || process.env.ORGANIZATION_CODE || '');
-  const email = normalizeOptional(args.email || process.env.ORGANIZATION_EMAIL || '');
-  const phone = normalizeOptional(args.phone || process.env.ORGANIZATION_PHONE || '');
-  const address = normalizeOptional(args.address || process.env.ORGANIZATION_ADDRESS || '');
-  const city = normalizeOptional(args.city || process.env.ORGANIZATION_CITY || '');
-  const state = normalizeOptional(args.state || process.env.ORGANIZATION_STATE || '');
-  const country = normalizeOptional(args.country || process.env.ORGANIZATION_COUNTRY || '');
-  const postalCode = normalizeOptional(args.postalCode || process.env.ORGANIZATION_POSTAL_CODE || '');
+  const name = normalizeName(args.name || process.env.HOTEL_NAME || process.env.ORGANIZATION_NAME || '');
+  const email = normalizeOptional(args.email || process.env.HOTEL_EMAIL || process.env.ORGANIZATION_EMAIL || '');
+  const phone = normalizeOptional(args.phone || process.env.HOTEL_PHONE || process.env.ORGANIZATION_PHONE || '');
 
-  validateInputs({ name, code, email });
+  validateInputs({ name, email });
 
   const connection = await pool.getConnection();
 
@@ -84,42 +65,41 @@ export async function run() {
     await connection.beginTransaction();
 
     const [existing] = await connection.query(
-      'SELECT id FROM organizations WHERE code = ? LIMIT 1',
-      [code]
+      'SELECT id FROM hotel_companies WHERE name = ? LIMIT 1',
+      [name]
     );
 
-    let organizationId;
+    let hotelCompanyId;
     let action;
 
     if (existing.length > 0) {
-      organizationId = existing[0].id;
+      hotelCompanyId = existing[0].id;
       action = 'updated';
 
       await connection.query(
-        `UPDATE organizations
-         SET name = ?, email = ?, phone = ?, address = ?, city = ?, state = ?, country = ?, postal_code = ?, is_active = 1, updated_at = NOW()
+        `UPDATE hotel_companies
+         SET name = ?, email = ?, phone = ?, is_active = 1, updated_at = NOW()
          WHERE id = ?`,
-        [name, email, phone, address, city, state, country, postalCode, organizationId]
+        [name, email, phone, hotelCompanyId]
       );
     } else {
-      organizationId = crypto.randomUUID();
+      hotelCompanyId = crypto.randomUUID();
       action = 'created';
 
       await connection.query(
-        `INSERT INTO organizations
-         (id, name, code, email, phone, address, city, state, country, postal_code, is_active, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())`,
-        [organizationId, name, code, email, phone, address, city, state, country, postalCode]
+        `INSERT INTO hotel_companies
+         (id, name, email, phone, is_active, created_at)
+         VALUES (?, ?, ?, ?, 1, NOW())`,
+        [hotelCompanyId, name, email, phone]
       );
     }
 
     await connection.commit();
 
-    console.log('Organization bootstrap completed successfully.');
+    console.log('Hotel bootstrap completed successfully.');
     console.log(`- Action: ${action}`);
-    console.log(`- Organization ID: ${organizationId}`);
+    console.log(`- Hotel ID: ${hotelCompanyId}`);
     console.log(`- Name: ${name}`);
-    console.log(`- Code: ${code}`);
     if (email) {
       console.log(`- Email: ${email}`);
     }
@@ -140,7 +120,7 @@ if (isDirectExecution) {
   run()
     .then(() => process.exit(0))
     .catch((error) => {
-      console.error('Failed to bootstrap organization:', error.message);
+      console.error('Failed to bootstrap hotel:', error.message);
       process.exit(1);
     });
 }

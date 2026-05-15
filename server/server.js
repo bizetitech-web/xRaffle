@@ -92,7 +92,7 @@ app.get('/api/db-status', async (req, res) => {
       [process.env.DB_NAME]
     );
     
-    const [orgCount] = await connection.query('SELECT COUNT(*) as count FROM organizations');
+    const [orgCount] = await connection.query('SELECT COUNT(*) as count FROM hotel_companies');
     const [userCount] = await connection.query('SELECT COUNT(*) as count FROM users');
     const [roleCount] = await connection.query('SELECT COUNT(*) as count FROM roles');
     
@@ -102,7 +102,7 @@ app.get('/api/db-status', async (req, res) => {
       status: 'connected',
       database: process.env.DB_NAME,
       tables: tables.map(t => t.TABLE_NAME),
-      organizationsCount: orgCount[0].count,
+      hotel_companiesCount: orgCount[0].count,
       usersCount: userCount[0].count,
       rolesCount: roleCount[0].count,
       timestamp: new Date()

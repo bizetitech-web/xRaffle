@@ -13,11 +13,11 @@ const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_
 
 test('org admin cannot create a new organization (super-admin only)', { skip: !hasCreds }, async () => {
   const { token } = await loginAsAdmin();
-  const { organizationId } = await createOrganization(token);
+  const { hotelCompanyId } = await createOrganization(token);
   const orgAdminRoleId = await getRoleIdByName(token, 'org_admin');
 
   const orgAdmin = await createUser(token, {
-    organizationId,
+    hotelCompanyId,
     roleId: orgAdminRoleId,
     firstName: 'Org',
     lastName: 'AdminDenied',
@@ -26,7 +26,7 @@ test('org admin cannot create a new organization (super-admin only)', { skip: !h
 
   const orgAdminLogin = await loginWithCredentials(orgAdmin.email, orgAdmin.password);
 
-  const attempt = await apiRequest('/admin/organizations', {
+  const attempt = await apiRequest('/admin/hotel_companies', {
     method: 'POST',
     token: orgAdminLogin.token,
     body: {

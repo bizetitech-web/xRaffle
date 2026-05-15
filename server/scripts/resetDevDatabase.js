@@ -6,9 +6,10 @@ const MANAGED_TABLES = [
   'role_permissions',
   'user_roles',
   'users',
+  'hotel_branches',
   'permissions',
   'roles',
-  'organizations',
+  'hotel_companies',
 ];
 
 function parseArgs(argv) {

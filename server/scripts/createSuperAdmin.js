@@ -35,26 +35,26 @@ function normalizeName(name) {
     .replace(/\s+/g, ' ');
 }
 
-async function getOrganizationId(connection, requestedOrganizationId) {
-  if (requestedOrganizationId) {
+async function getHotelCompanyId(connection, requestedHotelCompanyId) {
+  if (requestedHotelCompanyId) {
     const [rows] = await connection.query(
-      'SELECT id FROM organizations WHERE id = ? LIMIT 1',
-      [requestedOrganizationId]
+      'SELECT id FROM hotel_companies WHERE id = ? LIMIT 1',
+      [requestedHotelCompanyId]
     );
 
     if (rows.length === 0) {
-      throw new Error(`Organization not found: ${requestedOrganizationId}`);
+      throw new Error(`Hotel company not found: ${requestedHotelCompanyId}`);
     }
 
     return rows[0].id;
   }
 
   const [rows] = await connection.query(
-    'SELECT id FROM organizations ORDER BY created_at ASC, id ASC LIMIT 1'
+    'SELECT id FROM hotel_companies ORDER BY created_at ASC, id ASC LIMIT 1'
   );
 
   if (rows.length === 0) {
-    throw new Error('No organizations found. Create an organization first or pass --organizationId.');
+    throw new Error('No hotels found. Create a hotel first or pass --hotelCompanyId.');
   }
 
   return rows[0].id;
@@ -97,8 +97,8 @@ export async function run() {
   const password = args.password || process.env.SUPER_ADMIN_PASSWORD;
   const requestedName = args.name || process.env.SUPER_ADMIN_NAME || 'Super Admin';
   const phone = args.phone || process.env.SUPER_ADMIN_PHONE || null;
-  const requestedOrganizationId =
-    args.organizationId || process.env.SUPER_ADMIN_ORG_ID || null;
+  const requestedHotelCompanyId =
+    args.hotelCompanyId || process.env.SUPER_ADMIN_HOTEL_COMPANY_ID || process.env.SUPER_ADMIN_ORG_ID || null;
 
   if (!email) {
     throw new Error('Missing email. Provide --email or SUPER_ADMIN_EMAIL.');
@@ -118,13 +118,13 @@ export async function run() {
   try {
     await connection.beginTransaction();
 
-    const organizationId = await getOrganizationId(connection, requestedOrganizationId);
+    const hotelCompanyId = await getHotelCompanyId(connection, requestedHotelCompanyId);
     const roleId = await ensureSuperAdminRole(connection);
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const [existingUsers] = await connection.query(
-      'SELECT id FROM users WHERE organization_id = ? AND email = ? LIMIT 1',
-      [organizationId, email]
+      'SELECT id FROM users WHERE hotel_company_id = ? AND email = ? LIMIT 1',
+      [hotelCompanyId, email]
     );
 
     let userId;
@@ -150,7 +150,7 @@ export async function run() {
       await connection.query(
         `INSERT INTO users (
           id,
-          organization_id,
+          hotel_company_id,
           name,
           email,
           password_hash,
@@ -158,7 +158,7 @@ export async function run() {
           is_active,
           created_at
         ) VALUES (?, ?, ?, ?, ?, ?, 1, NOW())`,
-        [userId, organizationId, name, email, passwordHash, phone]
+        [userId, hotelCompanyId, name, email, passwordHash, phone]
       );
     }
 
@@ -173,7 +173,7 @@ export async function run() {
     console.log(`- Action: ${action}`);
     console.log(`- User ID: ${userId}`);
     console.log(`- Email: ${email}`);
-    console.log(`- Organization ID: ${organizationId}`);
+    console.log(`- Hotel ID: ${hotelCompanyId}`);
     console.log(`- Role: ${SUPER_ADMIN_ROLE_NAME} (${roleId})`);
   } catch (error) {
     await connection.rollback();

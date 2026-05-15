@@ -47,12 +47,6 @@ const getOrganizationFromUser = (user) => ({
   name: user?.organization?.name || '',
   email: user?.organization?.email || '',
   phone: user?.organization?.phone || '',
-  address: user?.organization?.address || '',
-  city: user?.organization?.city || '',
-  state: user?.organization?.state || '',
-  country: user?.organization?.country || '',
-  postalCode: user?.organization?.postalCode || '',
-  taxId: user?.organization?.taxId || '',
 });
 
 const Settings = () => {
@@ -138,7 +132,7 @@ const Settings = () => {
         Settings
       </Typography>
       <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4 }}>
-        Manage your account, organization, and preferences
+        Manage your account, hotel, and preferences
       </Typography>
 
       {saveSuccess && (
@@ -171,7 +165,7 @@ const Settings = () => {
           }}
         >
           <Tab icon={<PersonIcon />} label="Profile" aria-label="Profile" iconPosition="start" />
-          <Tab icon={<BusinessIcon />} label="Organization" aria-label="Organization" iconPosition="start" />
+          <Tab icon={<BusinessIcon />} label="Hotel" aria-label="Hotel" iconPosition="start" />
           <Tab icon={<NotificationsIcon />} label="Notifications" aria-label="Notifications" iconPosition="start" />
           <Tab icon={<SecurityIcon />} label="Security" aria-label="Security" iconPosition="start" />
           <Tab icon={<PaletteIcon />} label="Appearance" aria-label="Appearance" iconPosition="start" />
@@ -256,14 +250,14 @@ const Settings = () => {
           </Box>
         </TabPanel>
 
-        {/* Organization Tab */}
+        {/* Hotel Tab */}
         <TabPanel value={tabValue} index={1}>
           <Box sx={{ p: 3 }}>
             <Grid container spacing={3}>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Organization Name"
+                  label="Hotel Name"
                   name="name"
                   value={organizationData.name}
                   onChange={handleOrgChange}
@@ -274,7 +268,7 @@ const Settings = () => {
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Organization Email"
+                  label="Hotel Email"
                   name="email"
                   type="email"
                   value={organizationData.email}
@@ -286,7 +280,7 @@ const Settings = () => {
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Organization Phone"
+                  label="Hotel Phone"
                   name="phone"
                   value={organizationData.phone}
                   onChange={handleOrgChange}
@@ -294,75 +288,9 @@ const Settings = () => {
                   sx={inputSx}
                 />
               </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Address"
-                  name="address"
-                  value={organizationData.address}
-                  onChange={handleOrgChange}
-                  InputProps={{ readOnly: true }}
-                  sx={inputSx}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="City"
-                  name="city"
-                  value={organizationData.city}
-                  onChange={handleOrgChange}
-                  InputProps={{ readOnly: true }}
-                  sx={inputSx}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="State/Province"
-                  name="state"
-                  value={organizationData.state}
-                  onChange={handleOrgChange}
-                  InputProps={{ readOnly: true }}
-                  sx={inputSx}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Country"
-                  name="country"
-                  value={organizationData.country}
-                  onChange={handleOrgChange}
-                  InputProps={{ readOnly: true }}
-                  sx={inputSx}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Postal Code"
-                  name="postalCode"
-                  value={organizationData.postalCode}
-                  onChange={handleOrgChange}
-                  InputProps={{ readOnly: true }}
-                  sx={inputSx}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Tax ID / VAT Number"
-                  name="taxId"
-                  value={organizationData.taxId}
-                  onChange={handleOrgChange}
-                  InputProps={{ readOnly: true }}
-                  sx={inputSx}
-                />
-              </Grid>
             </Grid>
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 2 }}>
-              Organization details are read-only on this page.
+              Hotel details are read-only on this page.
             </Typography>
           </Box>
         </TabPanel>

@@ -1,7 +1,8 @@
 import pool from '../config/database.js';
 
 const REQUIRED_TABLES = [
-  'organizations',
+  'hotel_companies',
+  'hotel_branches',
   'users',
   'roles',
   'permissions',
@@ -11,7 +12,19 @@ const REQUIRED_TABLES = [
 ];
 
 const REQUIRED_ROLES = ['super_admin', 'org_admin', 'manager', 'viewer'];
-const REQUIRED_PERMISSIONS = ['MANAGE_USERS', 'MANAGE_ROLES', 'MANAGE_ORGANIZATIONS', 'VIEW_AUDIT_LOGS'];
+const REQUIRED_PERMISSIONS = ['MANAGE_USERS', 'MANAGE_ROLES', 'MANAGE_HOTELS', 'VIEW_AUDIT_LOGS'];
+const REQUIRED_ROLE_IDS = [
+  '79a386a5-207b-11f1-89b6-a4e078b831cc',
+  '79a386a6-207b-11f1-89b6-a4e078b831cc',
+  '79a386a7-207b-11f1-89b6-a4e078b831cc',
+  '79a386a8-207b-11f1-89b6-a4e078b831cc',
+];
+const REQUIRED_PERMISSION_IDS = [
+  '89a386a1-207b-11f1-89b6-a4e078b831cc',
+  '89a386a2-207b-11f1-89b6-a4e078b831cc',
+  '89a386a3-207b-11f1-89b6-a4e078b831cc',
+  '89a386a4-207b-11f1-89b6-a4e078b831cc',
+];
 
 function normalizeRoleName(name) {
   return String(name || '')
@@ -23,8 +36,8 @@ function normalizeRoleName(name) {
 async function verifyReadiness() {
   const startedAt = Date.now();
 
-  const rolePlaceholders = REQUIRED_ROLES.map(() => '?').join(', ');
-  const permissionPlaceholders = REQUIRED_PERMISSIONS.map(() => '?').join(', ');
+  const roleIdPlaceholders = REQUIRED_ROLE_IDS.map(() => '?').join(', ');
+  const permissionIdPlaceholders = REQUIRED_PERMISSION_IDS.map(() => '?').join(', ');
 
   const [tableRows] = await pool.query(
     `SELECT TABLE_NAME
@@ -37,20 +50,21 @@ async function verifyReadiness() {
   const missingTables = REQUIRED_TABLES.filter((name) => !existingTables.has(name));
 
   const [roleRows] = await pool.query(
-    `SELECT name FROM roles WHERE name IN (${rolePlaceholders})`,
-    REQUIRED_ROLES
+    `SELECT id FROM roles WHERE id IN (${roleIdPlaceholders})`,
+    REQUIRED_ROLE_IDS
   );
-  const existingRoles = new Set(roleRows.map((row) => normalizeRoleName(row.name)));
-  const missingRoles = REQUIRED_ROLES.filter((name) => !existingRoles.has(normalizeRoleName(name)));
+  const existingRoles = new Set(roleRows.map((row) => row.id));
+  const missingRoles = REQUIRED_ROLE_IDS.filter((id) => !existingRoles.has(id));
 
   const [permissionRows] = await pool.query(
-    `SELECT name FROM permissions WHERE name IN (${permissionPlaceholders})`,
-    REQUIRED_PERMISSIONS
+    `SELECT id FROM permissions WHERE id IN (${permissionIdPlaceholders})`,
+    REQUIRED_PERMISSION_IDS
   );
-  const existingPermissions = new Set(permissionRows.map((row) => row.name));
-  const missingPermissions = REQUIRED_PERMISSIONS.filter((name) => !existingPermissions.has(name));
+  const existingPermissions = new Set(permissionRows.map((row) => row.id));
+  const missingPermissions = REQUIRED_PERMISSION_IDS.filter((id) => !existingPermissions.has(id));
 
-  const [[orgCount]] = await pool.query('SELECT COUNT(*) AS count FROM organizations');
+  const [[orgCount]] = await pool.query('SELECT COUNT(*) AS count FROM hotel_companies');
+  const [[branchCount]] = await pool.query('SELECT COUNT(*) AS count FROM hotel_branches');
   const [[userCount]] = await pool.query('SELECT COUNT(*) AS count FROM users');
   const [[roleCount]] = await pool.query('SELECT COUNT(*) AS count FROM roles');
   const [[permissionCount]] = await pool.query('SELECT COUNT(*) AS count FROM permissions');
@@ -61,15 +75,16 @@ async function verifyReadiness() {
     durationMs: Date.now() - startedAt,
     checks: {
       tables: { required: REQUIRED_TABLES.length, present: existingTables.size, missing: missingTables },
-      roles: { required: REQUIRED_ROLES.length, present: existingRoles.size, missing: missingRoles },
+      roles: { required: REQUIRED_ROLE_IDS.length, present: existingRoles.size, missing: missingRoles },
       permissions: {
-        required: REQUIRED_PERMISSIONS.length,
+        required: REQUIRED_PERMISSION_IDS.length,
         present: existingPermissions.size,
         missing: missingPermissions,
       },
     },
     counts: {
-      organizations: orgCount.count,
+      hotel_companies: orgCount.count,
+      hotel_branches: branchCount.count,
       users: userCount.count,
       roles: roleCount.count,
       permissions: permissionCount.count,

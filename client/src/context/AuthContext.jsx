@@ -4,6 +4,11 @@ import { jwtDecode } from 'jwt-decode';
 
 const AuthContext = createContext();
 
+const PERMISSION_ALIASES = {
+  MANAGE_HOTELS: ['MANAGE_HOTELS', 'MANAGE_ORGANIZATIONS'],
+  MANAGE_ORGANIZATIONS: ['MANAGE_ORGANIZATIONS', 'MANAGE_HOTELS'],
+};
+
 const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
 
 export const useAuth = () => {
@@ -101,8 +106,9 @@ export const AuthProvider = ({ children }) => {
     
     // Super admins implicitly have all permissions.
     if (user?.role?.level === 1) return true;
-    
-    return permissions.includes(permissionName);
+
+    const acceptedNames = PERMISSION_ALIASES[permissionName] || [permissionName];
+    return acceptedNames.some((name) => permissions.includes(name));
   };
 
   const normalizedRoleName = () => {

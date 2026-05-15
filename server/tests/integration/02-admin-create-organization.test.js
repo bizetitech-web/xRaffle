@@ -8,6 +8,6 @@ test('admin can create organization', { skip: !hasCreds }, async () => {
   const { token } = await loginAsAdmin();
   const created = await createOrganization(token);
 
-  assert.ok(created.organizationId, 'Expected organizationId');
-  assert.ok(created.code.startsWith('org-'), 'Expected generated org code prefix');
+  assert.ok(created.hotelCompanyId, 'Expected hotelCompanyId');
+  assert.ok(created.name.startsWith('Integration Org '), 'Expected generated organization name prefix');
 });

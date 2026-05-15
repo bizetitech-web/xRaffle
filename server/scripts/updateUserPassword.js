@@ -31,7 +31,7 @@ async function run() {
 
   const email = (args.email || process.env.RESET_USER_EMAIL || '').trim().toLowerCase();
   const password = args.password || process.env.RESET_USER_PASSWORD;
-  const organizationId = args.organizationId || process.env.RESET_USER_ORG_ID || null;
+  const hotelCompanyId = args.hotelCompanyId || process.env.RESET_USER_ORG_ID || null;
 
   if (!email) {
     throw new Error('Missing email. Provide --email or RESET_USER_EMAIL.');
@@ -46,12 +46,12 @@ async function run() {
   try {
     await connection.beginTransaction();
 
-    let query = 'SELECT id, organization_id, email FROM users WHERE email = ?';
+    let query = 'SELECT id, hotel_company_id, email FROM users WHERE email = ?';
     const queryParams = [email];
 
-    if (organizationId) {
-      query += ' AND organization_id = ?';
-      queryParams.push(organizationId);
+    if (hotelCompanyId) {
+      query += ' AND hotel_company_id = ?';
+      queryParams.push(hotelCompanyId);
     }
 
     query += ' LIMIT 2';
@@ -63,7 +63,7 @@ async function run() {
     }
 
     if (users.length > 1) {
-      throw new Error('Multiple users matched. Pass --organizationId to target a single account.');
+      throw new Error('Multiple users matched. Pass --hotelCompanyId to target a single account.');
     }
 
     const targetUser = users[0];
@@ -79,7 +79,7 @@ async function run() {
     console.log('Password updated successfully.');
     console.log(`- User ID: ${targetUser.id}`);
     console.log(`- Email: ${targetUser.email}`);
-    console.log(`- Organization ID: ${targetUser.organization_id}`);
+    console.log(`- Organization ID: ${targetUser.hotel_company_id}`);
   } catch (error) {
     await connection.rollback();
     throw error;

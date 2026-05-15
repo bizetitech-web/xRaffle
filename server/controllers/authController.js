@@ -25,27 +25,21 @@ export const login = async (req, res) => {
     const [rows] = await pool.query(
       `SELECT 
         u.id,
-        u.organization_id,
+        u.hotel_company_id,
         u.name,
         u.email,
         u.password_hash,
         u.phone,
         u.is_active,
         u.created_at,
-        o.name AS organization_name,
-        o.code AS organization_code,
-        o.email AS organization_email,
-        o.phone AS organization_phone,
-        o.address AS organization_address,
-        o.city AS organization_city,
-        o.state AS organization_state,
-        o.country AS organization_country,
-        o.postal_code AS organization_postal_code,
+        o.name AS hotel_company_name,
+        o.email AS hotel_company_email,
+        o.phone AS hotel_company_phone,
         ur.role_id,
         r.name AS role_name,
         r.level AS role_level
        FROM users u
-       LEFT JOIN organizations o ON o.id = u.organization_id
+       LEFT JOIN hotel_companies o ON o.id = u.hotel_company_id
        LEFT JOIN user_roles ur ON ur.user_id = u.id
        LEFT JOIN roles r ON r.id = ur.role_id
        WHERE u.email = ?
@@ -95,11 +89,11 @@ export const login = async (req, res) => {
       role: user.role_name || 'user',
       roleId: user.role_id,
       roleLevel: user.role_level,
-      organizationId: user.organization_id,
+      hotelCompanyId: user.hotel_company_id,
       organization: { 
-        id: user.organization_id, 
-        name: user.organization_name,
-        code: user.organization_code 
+        id: user.hotel_company_id, 
+        name: user.hotel_company_name,
+        code: null
       },
     });
 
@@ -118,9 +112,9 @@ export const login = async (req, res) => {
           level: user.role_level
         },
         organization: { 
-          id: user.organization_id, 
-          name: user.organization_name,
-          code: user.organization_code
+          id: user.hotel_company_id, 
+          name: user.hotel_company_name,
+          code: null
         },
         permissions: permissions.map(p => p.name), // Optional: include basic permissions
         lastLogin: new Date().toISOString(),
@@ -145,20 +139,19 @@ export const getProfile = async (req, res) => {
     const [rows] = await pool.query(
       `SELECT 
         u.id,
-        u.organization_id,
+        u.hotel_company_id,
         u.name,
         u.email,
         u.password_hash,
         u.phone,
         u.is_active,
         u.created_at,
-        o.name AS organization_name,
-        o.code AS organization_code,
+        o.name AS hotel_company_name,
         ur.role_id,
         r.name AS role_name,
         r.level AS role_level
        FROM users u
-       LEFT JOIN organizations o ON o.id = u.organization_id
+       LEFT JOIN hotel_companies o ON o.id = u.hotel_company_id
        LEFT JOIN user_roles ur ON ur.user_id = u.id
        LEFT JOIN roles r ON r.id = ur.role_id
        WHERE u.id = ?
@@ -197,16 +190,15 @@ export const getProfile = async (req, res) => {
           level: user.role_level
         },
         organization: { 
-          id: user.organization_id, 
-          name: user.organization_name,
-          code: user.organization_code,
-          email: user.organization_email,
-          phone: user.organization_phone,
-          address: user.organization_address,
-          city: user.organization_city,
-          state: user.organization_state,
-          country: user.organization_country,
-          postalCode: user.organization_postal_code
+          id: user.hotel_company_id, 
+          name: user.hotel_company_name,
+          code: null,
+          email: user.hotel_company_email,
+          phone: user.hotel_company_phone,
+          city: null,
+          state: null,
+          country: null,
+          postalCode: null
         },
         permissions: permissions.map(p => p.name),
         isActive: user.is_active,
@@ -277,11 +269,11 @@ export const refreshToken = async (req, res) => {
     }
 
     const [rows] = await pool.query(
-            `SELECT u.id, u.organization_id, u.name, u.email, u.password_hash, u.phone, u.is_active, u.created_at,
-              o.name AS organization_name, o.code AS organization_code,
+            `SELECT u.id, u.hotel_company_id, u.name, u.email, u.password_hash, u.phone, u.is_active, u.created_at,
+              o.name AS hotel_company_name,
               ur.role_id, r.name AS role_name
        FROM users u
-       LEFT JOIN organizations o ON o.id = u.organization_id
+       LEFT JOIN hotel_companies o ON o.id = u.hotel_company_id
        LEFT JOIN user_roles ur ON ur.user_id = u.id
        LEFT JOIN roles r ON r.id = ur.role_id
        WHERE u.id = ?`,
@@ -300,11 +292,11 @@ export const refreshToken = async (req, res) => {
       name: user.name,
       role: user.role_name || 'user',
       roleId: user.role_id,
-      organizationId: user.organization_id,
+      hotelCompanyId: user.hotel_company_id,
       organization: { 
-        id: user.organization_id, 
-        name: user.organization_name,
-        code: user.organization_code 
+        id: user.hotel_company_id, 
+        name: user.hotel_company_name,
+        code: null
       },
     });
 

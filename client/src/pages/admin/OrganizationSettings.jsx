@@ -42,9 +42,6 @@ import {
   Email as EmailIcon,
   Phone as PhoneIcon,
   LocationOn as LocationIcon,
-  Public as WebsiteIcon,
-  Receipt as TaxIcon,
-  AdminPanelSettings as AdminIcon,
 } from '@mui/icons-material';
 import { DataGrid } from '@mui/x-data-grid';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
@@ -56,7 +53,7 @@ const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
 const OrganizationSettings = () => {
   const muiTheme = useMuiTheme();
   const { user, isSuperAdmin } = useAuth();
-  const [organizations, setOrganizations] = useState([]);
+  const [hotel_companies, setOrganizations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [openDialog, setOpenDialog] = useState(false);
@@ -68,16 +65,8 @@ const OrganizationSettings = () => {
   const [orgStats, setOrgStats] = useState({});
   const [formData, setFormData] = useState({
     name: '',
-    code: '',
     email: '',
     phone: '',
-    address: '',
-    city: '',
-    state: '',
-    country: '',
-    postalCode: '',
-    taxId: '',
-    website: '',
     status: 'active',
     isActive: true,
   });
@@ -89,14 +78,14 @@ const OrganizationSettings = () => {
   const fetchOrganizations = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE}/admin/organizations`);
+      const response = await axios.get(`${API_BASE}/admin/hotel_companies`);
       setOrganizations(response.data);
       
-      // Fetch stats for each organization
+      // Fetch stats for each hotel
       const stats = {};
       for (const org of response.data) {
         try {
-          const statsResponse = await axios.get(`${API_BASE}/admin/organizations/${org.id}/stats`);
+          const statsResponse = await axios.get(`${API_BASE}/admin/hotel_companies/${org.id}/stats`);
           stats[org.id] = statsResponse.data;
         } catch (err) {
           console.error(`Failed to fetch stats for org ${org.id}:`, err);
@@ -105,7 +94,7 @@ const OrganizationSettings = () => {
       setOrgStats(stats);
       setError(null);
     } catch (err) {
-      setError('Failed to fetch organizations');
+      setError('Failed to fetch hotels');
       console.error(err);
     } finally {
       setLoading(false);
@@ -117,33 +106,17 @@ const OrganizationSettings = () => {
       setSelectedOrg(org);
       setFormData({
         name: org.name || '',
-        code: org.code || '',
         email: org.email || '',
         phone: org.phone || '',
-        address: org.address || '',
-        city: org.city || '',
-        state: org.state || '',
-        country: org.country || '',
-        postalCode: org.postal_code || '',
-        taxId: org.tax_id || '',
-        website: org.website || '',
         status: org.status || 'active',
-        isActive: org.is_active === 1,
+        isActive: Boolean(org.is_active),
       });
     } else {
       setSelectedOrg(null);
       setFormData({
         name: '',
-        code: '',
         email: '',
         phone: '',
-        address: '',
-        city: '',
-        state: '',
-        country: '',
-        postalCode: '',
-        taxId: '',
-        website: '',
         status: 'active',
         isActive: true,
       });
@@ -169,26 +142,20 @@ const OrganizationSettings = () => {
     try {
       const payload = {
         name: formData.name,
-        code: formData.code,
         email: formData.email,
         phone: formData.phone,
-        address: formData.address,
-        city: formData.city,
-        state: formData.state,
-        country: formData.country,
-        postal_code: formData.postalCode,
         status: formData.status,
-        is_active: formData.isActive ? 1 : 0,
+        isActive: Boolean(formData.isActive),
       };
 
       if (selectedOrg) {
-        // Update organization
-        await axios.put(`${API_BASE}/admin/organizations/${selectedOrg.id}`, payload);
-        setSuccess('Organization updated successfully');
+        // Update hotel
+        await axios.put(`${API_BASE}/admin/hotel_companies/${selectedOrg.id}`, payload);
+        setSuccess('Hotel updated successfully');
       } else {
-        // Create organization
-        await axios.post(`${API_BASE}/admin/organizations`, payload);
-        setSuccess('Organization created successfully');
+        // Create hotel
+        await axios.post(`${API_BASE}/admin/hotel_companies`, payload);
+        setSuccess('Hotel created successfully');
       }
       fetchOrganizations();
       handleCloseDialog();
@@ -199,34 +166,34 @@ const OrganizationSettings = () => {
 
   const handleToggleStatus = async (orgId, currentStatus) => {
     try {
-      await axios.put(`${API_BASE}/admin/organizations/${orgId}/status`, {
+      await axios.put(`${API_BASE}/admin/hotel_companies/${orgId}/status`, {
         isActive: !currentStatus
       });
-      setSuccess(`Organization ${!currentStatus ? 'activated' : 'deactivated'} successfully`);
+      setSuccess(`Hotel ${!currentStatus ? 'activated' : 'deactivated'} successfully`);
       fetchOrganizations();
     } catch (err) {
-      setError('Failed to update organization status');
+      setError('Failed to update hotel status');
     }
   };
 
   const handleDelete = async (orgId) => {
-    if (!window.confirm('Are you sure you want to delete this organization? This action cannot be undone.')) {
+    if (!window.confirm('Are you sure you want to delete this hotel? This action cannot be undone.')) {
       return;
     }
     
     try {
-      await axios.delete(`${API_BASE}/admin/organizations/${orgId}`);
-      setSuccess('Organization deleted successfully');
+      await axios.delete(`${API_BASE}/admin/hotel_companies/${orgId}`);
+      setSuccess('Hotel deleted successfully');
       fetchOrganizations();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete organization');
+      setError(err.response?.data?.error || 'Failed to delete hotel');
     }
   };
 
   const columns = [
     {
       field: 'name',
-      headerName: 'Organization',
+      headerName: 'Hotel',
       width: 250,
       renderCell: (params) => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -236,9 +203,6 @@ const OrganizationSettings = () => {
           <Box>
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
               {params.value}
-            </Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              Code: {params.row.code}
             </Typography>
           </Box>
         </Box>
@@ -256,13 +220,6 @@ const OrganizationSettings = () => {
           </Typography>
         </Box>
       ),
-    },
-    {
-      field: 'location',
-      headerName: 'Location',
-      width: 180,
-      valueGetter: (params) => 
-        `${params.row.city || ''}${params.row.city && params.row.country ? ', ' : ''}${params.row.country || ''}`,
     },
     {
       field: 'stats',
@@ -336,10 +293,9 @@ const OrganizationSettings = () => {
     },
   ];
 
-  const filteredOrgs = organizations.filter(org => 
+  const filteredOrgs = hotel_companies.filter(org => 
     org.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    org.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    org.code?.toLowerCase().includes(searchTerm.toLowerCase())
+    org.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (!isSuperAdmin()) {
@@ -366,11 +322,11 @@ const OrganizationSettings = () => {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
           <Typography variant="h4" sx={{ color: 'text.primary', fontWeight: 600 }}>
-            Organizations
+            Hotels
           </Typography>
           {!isMobile && (
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
-              Manage all organizations in the system
+              Manage all hotels in the system
             </Typography>
           )}
         </Box>
@@ -383,7 +339,7 @@ const OrganizationSettings = () => {
             '&:hover': { bgcolor: '#CC6E00' }
           }}
         >
-          {isMobile ? 'New' : 'New Organization'}
+          {isMobile ? 'New' : 'New Hotel'}
         </Button>
       </Box>
 
@@ -393,10 +349,10 @@ const OrganizationSettings = () => {
           <Card sx={{ bgcolor: 'background.paper' }}>
             <CardContent>
               <Typography variant="subtitle2" sx={{ color: 'text.secondary' }}>
-                Total Organizations
+                Total Hotels
               </Typography>
               <Typography variant="h3" sx={{ color: 'text.primary', mt: 1 }}>
-                {organizations.length}
+                {hotel_companies.length}
               </Typography>
             </CardContent>
           </Card>
@@ -405,10 +361,10 @@ const OrganizationSettings = () => {
           <Card sx={{ bgcolor: 'background.paper' }}>
             <CardContent>
               <Typography variant="subtitle2" sx={{ color: 'text.secondary' }}>
-                Active Organizations
+                Active Hotels
               </Typography>
               <Typography variant="h3" sx={{ color: '#10b981', mt: 1 }}>
-                {organizations.filter(o => o.is_active).length}
+                {hotel_companies.filter(o => o.is_active).length}
               </Typography>
             </CardContent>
           </Card>
@@ -431,7 +387,7 @@ const OrganizationSettings = () => {
       <Paper sx={{ bgcolor: 'background.paper', p: 2, mb: 3 }}>
         <TextField
           fullWidth
-          placeholder="Search organizations by name, email, or code..."
+          placeholder="Search hotels by name or email..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           InputProps={{
@@ -468,7 +424,7 @@ const OrganizationSettings = () => {
         </Alert>
       )}
 
-      {/* Organizations Table */}
+      {/* Hotels Table */}
       <Paper sx={{ bgcolor: 'background.paper', height: 600 }}>
         <DataGrid
           rows={filteredOrgs}
@@ -495,7 +451,7 @@ const OrganizationSettings = () => {
         />
       </Paper>
 
-      {/* Create/Edit Organization Dialog */}
+      {/* Create/Edit Hotel Dialog */}
       <Dialog 
         open={openDialog} 
         onClose={handleCloseDialog}
@@ -508,7 +464,7 @@ const OrganizationSettings = () => {
         <DialogTitle sx={{ color: 'text.primary', borderBottom: `1px solid ${muiTheme.palette.divider}` }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <BusinessIcon sx={{ color: '#FF8A00' }} />
-            {selectedOrg ? 'Edit Organization' : 'Create New Organization'}
+            {selectedOrg ? 'Edit Hotel' : 'Create New Hotel'}
           </Box>
         </DialogTitle>
         
@@ -525,7 +481,7 @@ const OrganizationSettings = () => {
           }}
         >
           <Tab label="Basic Information" />
-          <Tab label="Address & Contact" />
+          <Tab label="Contact" />
           <Tab label="Settings" />
         </Tabs>
 
@@ -535,32 +491,11 @@ const OrganizationSettings = () => {
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Organization Name"
+                  label="Hotel Name"
                   name="name"
                   value={formData.name}
                   onChange={handleChange}
                   required
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Organization Code"
-                  name="code"
-                  value={formData.code}
-                  onChange={handleChange}
-                  helperText="Unique identifier for the organization"
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Tax ID / VAT Number"
-                  name="taxId"
-                  value={formData.taxId}
-                  onChange={handleChange}
                   sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
                 />
               </Grid>
@@ -599,86 +534,15 @@ const OrganizationSettings = () => {
                   sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
                 />
               </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Website"
-                  name="website"
-                  value={formData.website}
-                  onChange={handleChange}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <WebsiteIcon sx={{ color: 'text.secondary' }} />
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
             </Grid>
           )}
 
           {tabValue === 1 && (
             <Grid container spacing={2} sx={{ mt: 1 }}>
               <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Street Address"
-                  name="address"
-                  value={formData.address}
-                  onChange={handleChange}
-                  multiline
-                  rows={2}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <LocationIcon sx={{ color: 'text.secondary' }} />
-                      </InputAdornment>
-                    ),
-                  }}
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="City"
-                  name="city"
-                  value={formData.city}
-                  onChange={handleChange}
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="State / Province"
-                  name="state"
-                  value={formData.state}
-                  onChange={handleChange}
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Country"
-                  name="country"
-                  value={formData.country}
-                  onChange={handleChange}
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Postal Code"
-                  name="postalCode"
-                  value={formData.postalCode}
-                  onChange={handleChange}
-                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
-                />
+                <Alert severity="info">
+                  Hotel contact details include email and phone only.
+                </Alert>
               </Grid>
             </Grid>
           )}
@@ -718,7 +582,7 @@ const OrganizationSettings = () => {
                       }}
                     />
                   }
-                  label="Active Organization"
+                  label="Active Hotel"
                   sx={{ color: 'text.primary' }}
                 />
               </Grid>
@@ -728,16 +592,26 @@ const OrganizationSettings = () => {
                   <Grid item xs={12}>
                     <Divider sx={{ borderColor: 'divider', my: 2 }} />
                     <Typography variant="subtitle2" sx={{ color: 'text.primary', mb: 2 }}>
-                      Organization Statistics
+                      Hotel Statistics
                     </Typography>
                     <Grid container spacing={2}>
-                      <Grid item xs={12}>
+                      <Grid item xs={12} sm={6}>
                         <Paper sx={{ p: 2, bgcolor: 'background.default', textAlign: 'center' }}>
                           <Typography variant="h4" sx={{ color: '#3b82f6' }}>
                             {orgStats[selectedOrg.id]?.userCount || 0}
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                             Users
+                          </Typography>
+                        </Paper>
+                      </Grid>
+                      <Grid item xs={12} sm={6}>
+                        <Paper sx={{ p: 2, bgcolor: 'background.default', textAlign: 'center' }}>
+                          <Typography variant="h4" sx={{ color: '#10b981' }}>
+                            {orgStats[selectedOrg.id]?.branchCount || 0}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            Branches
                           </Typography>
                         </Paper>
                       </Grid>
@@ -761,7 +635,7 @@ const OrganizationSettings = () => {
               '&:hover': { bgcolor: '#CC6E00' }
             }}
           >
-            {selectedOrg ? 'Update' : 'Create'} Organization
+            {selectedOrg ? 'Update' : 'Create'} Hotel
           </Button>
         </DialogActions>
       </Dialog>

@@ -686,7 +686,7 @@ const Permissions = () => {
                 value={formData.module}
                 onChange={handleChange}
                 error={!!formErrors.module}
-                helperText={formErrors.module || 'e.g., users, roles, organizations'}
+                helperText={formErrors.module || 'e.g., users, roles, hotels'}
                 placeholder="users"
                 InputProps={{
                   startAdornment: (

@@ -20,32 +20,34 @@ router.get('/users',
   async (req, res) => {
     try {
       const isSuperAdmin = req.user.role_level === 1;
-      const organizationId = isSuperAdmin
-        ? (req.query.organizationId || req.organizationId)
-        : req.organizationId;
+      const hotelCompanyId = isSuperAdmin
+        ? (req.query.hotelCompanyId || req.hotelCompanyId)
+        : req.hotelCompanyId;
 
       let query = `
         SELECT 
           u.id, u.email, u.name, u.first_name, u.last_name, 
           u.phone, u.is_active, u.last_login, u.created_at,
-          u.organization_id,
+          u.hotel_company_id, u.branch_id,
           r.id as role_id, r.name as role_name, r.level as role_level,
-          o.name as organization_name, o.code as organization_code
+          o.name as hotel_company_name,
+          hb.name as branch_name
         FROM users u
         LEFT JOIN user_roles ur ON u.id = ur.user_id
         LEFT JOIN roles r ON r.id = ur.role_id
-        LEFT JOIN organizations o ON u.organization_id = o.id
+        LEFT JOIN hotel_companies o ON u.hotel_company_id = o.id
+        LEFT JOIN hotel_branches hb ON hb.id = u.branch_id
       `;
 
       const params = [];
       
       // Apply organization filter
-      if (organizationId && !isSuperAdmin) {
-        query += ` WHERE u.organization_id = ?`;
-        params.push(organizationId);
-      } else if (organizationId && isSuperAdmin) {
-        query += ` WHERE u.organization_id = ?`;
-        params.push(organizationId);
+      if (hotelCompanyId && !isSuperAdmin) {
+        query += ` WHERE u.hotel_company_id = ?`;
+        params.push(hotelCompanyId);
+      } else if (hotelCompanyId && isSuperAdmin) {
+        query += ` WHERE u.hotel_company_id = ?`;
+        params.push(hotelCompanyId);
       }
 
       query += ` ORDER BY u.created_at DESC`;
@@ -89,18 +91,20 @@ router.get('/users/:id',
       }
 
       const { id } = req.params;
-      const organizationId = req.organizationId;
+      const hotelCompanyId = req.hotelCompanyId;
       const isSuperAdmin = req.user.role_level === 1;
 
       let query = `
         SELECT 
           u.*, 
           r.id as role_id, r.name as role_name, r.level as role_level,
-          o.name as organization_name, o.code as organization_code
+          o.name as hotel_company_name,
+          hb.name as branch_name
         FROM users u
         LEFT JOIN user_roles ur ON u.id = ur.user_id
         LEFT JOIN roles r ON r.id = ur.role_id
-        LEFT JOIN organizations o ON u.organization_id = o.id
+        LEFT JOIN hotel_companies o ON u.hotel_company_id = o.id
+        LEFT JOIN hotel_branches hb ON hb.id = u.branch_id
         WHERE u.id = ?
       `;
       
@@ -108,8 +112,8 @@ router.get('/users/:id',
       
       // Non-super admins can only see users in their org
       if (!isSuperAdmin) {
-        query += ` AND u.organization_id = ?`;
-        params.push(organizationId);
+        query += ` AND u.hotel_company_id = ?`;
+        params.push(hotelCompanyId);
       }
 
       const [rows] = await pool.query(query, params);
@@ -161,7 +165,8 @@ router.post('/users',
     body('firstName').notEmpty().trim(),
     body('lastName').notEmpty().trim(),
     body('roleId').isUUID(),
-    body('organizationId').optional().isUUID(),
+    body('hotelCompanyId').optional().isUUID(),
+    body('branchId').optional({ nullable: true }).isUUID(),
     body('phone').optional(),
   ],
   async (req, res) => {
@@ -177,7 +182,8 @@ router.post('/users',
         firstName,
         lastName,
         roleId,
-        organizationId,
+        hotelCompanyId,
+        branchId,
         phone
       } = req.body;
 
@@ -185,11 +191,11 @@ router.post('/users',
       const isSuperAdmin = req.user.role_level === 1;
 
       // Determine which organization to use
-      let targetOrgId = organizationId;
+      let targetOrgId = hotelCompanyId;
       
       // If not super admin, force to their own organization
       if (!isSuperAdmin) {
-        targetOrgId = req.organizationId;
+        targetOrgId = req.hotelCompanyId;
       }
 
       if (!targetOrgId) {
@@ -223,12 +229,26 @@ router.post('/users',
 
       // Check if organization exists
       const [orgCheck] = await pool.query(
-        'SELECT id FROM organizations WHERE id = ?',
+        'SELECT id FROM hotel_companies WHERE id = ?',
         [targetOrgId]
       );
 
       if (orgCheck.length === 0) {
         return res.status(400).json({ error: 'Invalid organization' });
+      }
+
+      let targetBranchId = null;
+      if (branchId) {
+        const [branchCheck] = await pool.query(
+          'SELECT id, company_id FROM hotel_branches WHERE id = ? LIMIT 1',
+          [branchId]
+        );
+
+        if (branchCheck.length === 0 || branchCheck[0].company_id !== targetOrgId) {
+          return res.status(400).json({ error: 'Invalid branch for selected hotel' });
+        }
+
+        targetBranchId = branchId;
       }
 
       const userId = uuidv4();
@@ -242,12 +262,13 @@ router.post('/users',
         // Create user
         await connection.query(
           `INSERT INTO users (
-            id, organization_id, email, password_hash, 
+            id, hotel_company_id, branch_id, email, password_hash, 
             first_name, last_name, name, phone, is_active, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
           [
             userId,
             targetOrgId,
+            targetBranchId,
             email,
             passwordHash,
             firstName,
@@ -311,13 +332,14 @@ router.put('/users/:id',
       }
 
       const { id } = req.params;
-      const organizationId = req.organizationId;
+      const hotelCompanyId = req.hotelCompanyId;
       const isSuperAdmin = req.user.role_level === 1;
       const {
         firstName,
         lastName,
         phone,
         roleId,
+        branchId,
         isActive
       } = req.body;
 
@@ -326,8 +348,8 @@ router.put('/users/:id',
       const userCheckParams = [id];
       
       if (!isSuperAdmin) {
-        userCheckQuery += ' AND organization_id = ?';
-        userCheckParams.push(organizationId);
+        userCheckQuery += ' AND hotel_company_id = ?';
+        userCheckParams.push(hotelCompanyId);
       }
 
       const [userCheck] = await pool.query(userCheckQuery, userCheckParams);
@@ -363,6 +385,23 @@ router.put('/users/:id',
         if (phone !== undefined) {
           updates.push('phone = ?');
           params.push(phone);
+        }
+        if (branchId !== undefined) {
+          if (branchId === null) {
+            updates.push('branch_id = NULL');
+          } else {
+            const [branchCheck] = await connection.query(
+              'SELECT id, company_id FROM hotel_branches WHERE id = ? LIMIT 1',
+              [branchId]
+            );
+
+            if (branchCheck.length === 0 || branchCheck[0].company_id !== existingUser.hotel_company_id) {
+              throw new Error('Invalid branch for user organization');
+            }
+
+            updates.push('branch_id = ?');
+            params.push(branchId);
+          }
         }
         if (isActive !== undefined) {
           updates.push('is_active = ?');
@@ -426,6 +465,9 @@ router.put('/users/:id',
         res.json({ message: 'User updated successfully' });
       } catch (error) {
         await connection.rollback();
+        if (error.message === 'Invalid branch for user organization') {
+          return res.status(400).json({ error: error.message });
+        }
         throw error;
       } finally {
         connection.release();
@@ -454,7 +496,7 @@ router.put('/users/:id/status',
 
       const { id } = req.params;
       const { isActive } = req.body;
-      const organizationId = req.organizationId;
+      const hotelCompanyId = req.hotelCompanyId;
       const isSuperAdmin = req.user.role_level === 1;
 
       if (typeof isActive !== 'boolean') {
@@ -470,8 +512,8 @@ router.put('/users/:id/status',
       const userCheckParams = [id];
 
       if (!isSuperAdmin) {
-        userCheckQuery += ' AND organization_id = ?';
-        userCheckParams.push(organizationId);
+        userCheckQuery += ' AND hotel_company_id = ?';
+        userCheckParams.push(hotelCompanyId);
       }
 
       const [userCheck] = await pool.query(userCheckQuery, userCheckParams);
@@ -521,7 +563,7 @@ router.delete('/users/:id',
       }
 
       const { id } = req.params;
-      const organizationId = req.organizationId;
+      const hotelCompanyId = req.hotelCompanyId;
       const isSuperAdmin = req.user.role_level === 1;
 
       // Check if user exists and is in same org (unless super admin)
@@ -529,8 +571,8 @@ router.delete('/users/:id',
       const userCheckParams = [id];
       
       if (!isSuperAdmin) {
-        userCheckQuery += ' AND organization_id = ?';
-        userCheckParams.push(organizationId);
+        userCheckQuery += ' AND hotel_company_id = ?';
+        userCheckParams.push(hotelCompanyId);
       }
 
       const [userCheck] = await pool.query(userCheckQuery, userCheckParams);
@@ -675,6 +717,7 @@ router.post('/roles',
     body('level').isInt({ min: 1, max: 9 }),
     body('description').optional(),
     body('permissions').isArray(),
+    body('permissions.*').isUUID(),
   ],
   async (req, res) => {
     try {
@@ -684,6 +727,19 @@ router.post('/roles',
       }
 
       const { name, description, level, permissions } = req.body;
+      const permissionIds = Array.from(new Set(permissions));
+
+      if (permissionIds.length > 0) {
+        const placeholders = permissionIds.map(() => '?').join(', ');
+        const [permissionRows] = await pool.query(
+          `SELECT id FROM permissions WHERE id IN (${placeholders})`,
+          permissionIds
+        );
+
+        if (permissionRows.length !== permissionIds.length) {
+          return res.status(400).json({ error: 'One or more permission IDs are invalid' });
+        }
+      }
 
       // Check if role name already exists
       const [existing] = await pool.query(
@@ -710,7 +766,7 @@ router.post('/roles',
         );
 
         // Assign permissions
-        for (const permId of permissions) {
+        for (const permId of permissionIds) {
           await connection.query(
             'INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
             [roleId, permId]
@@ -757,6 +813,13 @@ router.post('/roles',
 router.put('/roles/:id',
   param('id').isUUID(),
   hasRoleLevel(1), // Super admin only
+  [
+    body('name').notEmpty().trim(),
+    body('level').isInt({ min: 1, max: 9 }),
+    body('description').optional(),
+    body('permissions').isArray(),
+    body('permissions.*').isUUID(),
+  ],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -766,6 +829,19 @@ router.put('/roles/:id',
 
       const { id } = req.params;
       const { name, description, level, permissions } = req.body;
+      const permissionIds = Array.from(new Set(permissions));
+
+      if (permissionIds.length > 0) {
+        const placeholders = permissionIds.map(() => '?').join(', ');
+        const [permissionRows] = await pool.query(
+          `SELECT id FROM permissions WHERE id IN (${placeholders})`,
+          permissionIds
+        );
+
+        if (permissionRows.length !== permissionIds.length) {
+          return res.status(400).json({ error: 'One or more permission IDs are invalid' });
+        }
+      }
 
       // Check if role exists
       const [existing] = await pool.query(
@@ -795,7 +871,7 @@ router.put('/roles/:id',
           [id]
         );
 
-        for (const permId of permissions) {
+        for (const permId of permissionIds) {
           await connection.query(
             'INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
             [id, permId]
@@ -1027,15 +1103,15 @@ router.post('/permissions',
 
       // Log action
       await connection.query(
-        `INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        `INSERT INTO audit_logs (id, user_id, action, table_name, entity_type, record_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, NOW())`,
         [
           uuidv4(),
           req.user.sub,
-          'CREATE',
+          'CREATE_PERMISSION',
+          'permissions',
           'permission',
           permissionId,
-          JSON.stringify({ name, module })
         ]
       );
 
@@ -1127,15 +1203,15 @@ router.put('/permissions/:id',
 
       // Log action
       await connection.query(
-        `INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        `INSERT INTO audit_logs (id, user_id, action, table_name, entity_type, record_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, NOW())`,
         [
           uuidv4(),
           req.user.sub,
-          'UPDATE',
+          'UPDATE_PERMISSION',
+          'permissions',
           'permission',
           id,
-          JSON.stringify({ name, module, description })
         ]
       );
 
@@ -1189,15 +1265,15 @@ router.delete('/permissions/:id',
 
       // Log action
       await connection.query(
-        `INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        `INSERT INTO audit_logs (id, user_id, action, table_name, entity_type, record_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, NOW())`,
         [
           uuidv4(),
           req.user.sub,
-          'DELETE',
+          'DELETE_PERMISSION',
+          'permissions',
           'permission',
           id,
-          JSON.stringify({ deleted: true, removedFromRoles: roleCount[0].count })
         ]
       );
 
@@ -1220,11 +1296,11 @@ router.delete('/permissions/:id',
 // ==================== ORGANIZATION MANAGEMENT ====================
 
 /**
- * @route   GET /api/admin/organizations
- * @desc    Get all organizations (super admin only)
+ * @route   GET /api/admin/hotel_companies
+ * @desc    Get all hotel_companies (super admin only)
  * @access  Private (requires super admin)
  */
-router.get('/organizations',
+router.get('/hotel_companies',
   hasRoleLevel(1), // Only super admin (level 1)
   async (req, res) => {
     try {
@@ -1232,26 +1308,26 @@ router.get('/organizations',
         SELECT 
           o.*,
           COUNT(DISTINCT u.id) as user_count
-        FROM organizations o
-        LEFT JOIN users u ON o.id = u.organization_id AND u.is_active = 1
+        FROM hotel_companies o
+        LEFT JOIN users u ON o.id = u.hotel_company_id AND u.is_active = 1
         GROUP BY o.id
         ORDER BY o.created_at DESC
       `);
 
       res.json(rows);
     } catch (error) {
-      console.error('Fetch organizations error:', error);
-      res.status(500).json({ error: 'Failed to fetch organizations' });
+      console.error('Fetch hotel_companies error:', error);
+      res.status(500).json({ error: 'Failed to fetch hotel_companies' });
     }
   }
 );
 
 /**
- * @route   GET /api/admin/organizations/:id
+ * @route   GET /api/admin/hotel_companies/:id
  * @desc    Get single organization by ID
  * @access  Private (requires super admin)
  */
-router.get('/organizations/:id',
+router.get('/hotel_companies/:id',
   param('id').isUUID(),
   hasRoleLevel(1),
   async (req, res) => {
@@ -1264,7 +1340,7 @@ router.get('/organizations/:id',
       const { id } = req.params;
 
       const [rows] = await pool.query(
-        'SELECT * FROM organizations WHERE id = ?',
+        'SELECT * FROM hotel_companies WHERE id = ?',
         [id]
       );
 
@@ -1276,12 +1352,17 @@ router.get('/organizations/:id',
 
       // Get organization stats
       const [userCount] = await pool.query(
-        'SELECT COUNT(*) as count FROM users WHERE organization_id = ? AND is_active = 1',
+        'SELECT COUNT(*) as count FROM users WHERE hotel_company_id = ? AND is_active = 1',
+        [id]
+      );
+      const [branchCount] = await pool.query(
+        'SELECT COUNT(*) as count FROM hotel_branches WHERE company_id = ?',
         [id]
       );
 
       organization.stats = {
-        users: userCount[0].count
+        users: userCount[0].count,
+        branches: branchCount[0].count,
       };
 
       res.json(organization);
@@ -1293,11 +1374,11 @@ router.get('/organizations/:id',
 );
 
 /**
- * @route   GET /api/admin/organizations/:id/stats
+ * @route   GET /api/admin/hotel_companies/:id/stats
  * @desc    Get organization statistics
  * @access  Private (requires super admin or org admin)
  */
-router.get('/organizations/:id/stats',
+router.get('/hotel_companies/:id/stats',
   param('id').isUUID(),
   async (req, res) => {
     try {
@@ -1315,10 +1396,10 @@ router.get('/organizations/:id/stats',
         // For org admin, check if they belong to this org
         if (userRole === 2) {
           const [userCheck] = await pool.query(
-            'SELECT organization_id FROM users WHERE id = ?',
+            'SELECT hotel_company_id FROM users WHERE id = ?',
             [userId]
           );
-          if (userCheck[0]?.organization_id !== id) {
+          if (userCheck[0]?.hotel_company_id !== id) {
             return res.status(403).json({ error: 'Access denied' });
           }
         } else {
@@ -1328,7 +1409,11 @@ router.get('/organizations/:id/stats',
 
       // Get user count
       const [userCount] = await pool.query(
-        'SELECT COUNT(*) as count FROM users WHERE organization_id = ? AND is_active = 1',
+        'SELECT COUNT(*) as count FROM users WHERE hotel_company_id = ? AND is_active = 1',
+        [id]
+      );
+      const [branchCount] = await pool.query(
+        'SELECT COUNT(*) as count FROM hotel_branches WHERE company_id = ?',
         [id]
       );
 
@@ -1336,7 +1421,7 @@ router.get('/organizations/:id/stats',
       const [recentUsers] = await pool.query(
         `SELECT id, name, email, created_at 
          FROM users 
-         WHERE organization_id = ? 
+         WHERE hotel_company_id = ? 
          ORDER BY created_at DESC 
          LIMIT 5`,
         [id]
@@ -1344,6 +1429,7 @@ router.get('/organizations/:id/stats',
 
       res.json({
         userCount: userCount[0].count,
+        branchCount: branchCount[0].count,
         recentUsers
       });
     } catch (error) {
@@ -1354,24 +1440,16 @@ router.get('/organizations/:id/stats',
 );
 
 /**
- * @route   POST /api/admin/organizations
+ * @route   POST /api/admin/hotel_companies
  * @desc    Create new organization
  * @access  Private (requires super admin)
  */
-router.post('/organizations',
+router.post('/hotel_companies',
   hasRoleLevel(1),
   [
     body('name').notEmpty().trim(),
-    body('code').optional().trim(),
     body('email').optional().isEmail().normalizeEmail(),
     body('phone').optional(),
-    body('address').optional(),
-    body('city').optional(),
-    body('state').optional(),
-    body('country').optional(),
-    body('postalCode').optional(),
-    body('taxId').optional(),
-    body('website').optional(),
     body('status').optional().isIn(['active', 'inactive', 'suspended']),
   ],
   async (req, res) => {
@@ -1383,25 +1461,14 @@ router.post('/organizations',
 
       const {
         name,
-        code,
         email,
         phone,
-        address,
-        city,
-        state,
-        country,
-        postalCode,
-        taxId,
-        website,
         status = 'active'
       } = req.body;
 
-      // Generate a unique code if not provided
-      const orgCode = code || `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now().toString(36)}`;
-
       // Check if organization name already exists
       const [nameCheck] = await pool.query(
-        'SELECT id FROM organizations WHERE name = ?',
+        'SELECT id FROM hotel_companies WHERE name = ?',
         [name]
       );
 
@@ -1409,24 +1476,17 @@ router.post('/organizations',
         return res.status(400).json({ error: 'Organization name already exists' });
       }
 
-      const organizationId = uuidv4();
+      const hotelCompanyId = uuidv4();
 
       await pool.query(
-        `INSERT INTO organizations (
-          id, name, code, email, phone, address, city, state, country,
-          postal_code, status, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+        `INSERT INTO hotel_companies (
+          id, name, email, phone, status, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
         [
-          organizationId,
+          hotelCompanyId,
           name,
-          orgCode,
           email || null,
           phone || null,
-          address || null,
-          city || null,
-          state || null,
-          country || null,
-          postalCode || null,
           status
         ]
       );
@@ -1439,14 +1499,14 @@ router.post('/organizations',
           uuidv4(),
           req.user.sub,
           'CREATE_ORGANIZATION',
-          'organizations',
-          organizationId
+          'hotel_companies',
+          hotelCompanyId
         ]
       );
 
       res.status(201).json({
         message: 'Organization created successfully',
-        organizationId
+        hotelCompanyId
       });
     } catch (error) {
       console.error('Create organization error:', error);
@@ -1456,11 +1516,11 @@ router.post('/organizations',
 );
 
 /**
- * @route   PUT /api/admin/organizations/:id
+ * @route   PUT /api/admin/hotel_companies/:id
  * @desc    Update organization
  * @access  Private (requires super admin or org admin)
  */
-router.put('/organizations/:id',
+router.put('/hotel_companies/:id',
   param('id').isUUID(),
   async (req, res) => {
     try {
@@ -1481,24 +1541,18 @@ router.put('/organizations/:id',
       // For org admin, check if they belong to this org
       if (userRole === 2) {
         const [userCheck] = await pool.query(
-          'SELECT organization_id FROM users WHERE id = ?',
+          'SELECT hotel_company_id FROM users WHERE id = ?',
           [userId]
         );
-        if (userCheck[0]?.organization_id !== id) {
+        if (userCheck[0]?.hotel_company_id !== id) {
           return res.status(403).json({ error: 'Access denied' });
         }
       }
 
       const {
         name,
-        code,
         email,
         phone,
-        address,
-        city,
-        state,
-        country,
-        postalCode,
         status,
         isActive
       } = req.body;
@@ -1511,10 +1565,6 @@ router.put('/organizations/:id',
         updates.push('name = ?');
         params.push(name);
       }
-      if (code) {
-        updates.push('code = ?');
-        params.push(code);
-      }
       if (email !== undefined) {
         updates.push('email = ?');
         params.push(email);
@@ -1522,26 +1572,6 @@ router.put('/organizations/:id',
       if (phone !== undefined) {
         updates.push('phone = ?');
         params.push(phone);
-      }
-      if (address !== undefined) {
-        updates.push('address = ?');
-        params.push(address);
-      }
-      if (city !== undefined) {
-        updates.push('city = ?');
-        params.push(city);
-      }
-      if (state !== undefined) {
-        updates.push('state = ?');
-        params.push(state);
-      }
-      if (country !== undefined) {
-        updates.push('country = ?');
-        params.push(country);
-      }
-      if (postalCode !== undefined) {
-        updates.push('postal_code = ?');
-        params.push(postalCode);
       }
       if (status) {
         updates.push('status = ?');
@@ -1561,7 +1591,7 @@ router.put('/organizations/:id',
       params.push(id);
 
       await pool.query(
-        `UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`,
+        `UPDATE hotel_companies SET ${updates.join(', ')} WHERE id = ?`,
         params
       );
 
@@ -1573,7 +1603,7 @@ router.put('/organizations/:id',
           uuidv4(),
           userId,
           'UPDATE_ORGANIZATION',
-          'organizations',
+          'hotel_companies',
           id
         ]
       );
@@ -1587,11 +1617,11 @@ router.put('/organizations/:id',
 );
 
 /**
- * @route   PUT /api/admin/organizations/:id/status
+ * @route   PUT /api/admin/hotel_companies/:id/status
  * @desc    Update organization status
  * @access  Private (requires super admin)
  */
-router.put('/organizations/:id/status',
+router.put('/hotel_companies/:id/status',
   param('id').isUUID(),
   hasRoleLevel(1),
   async (req, res) => {
@@ -1605,7 +1635,7 @@ router.put('/organizations/:id/status',
       const { isActive } = req.body;
 
       await pool.query(
-        'UPDATE organizations SET is_active = ?, updated_at = NOW() WHERE id = ?',
+        'UPDATE hotel_companies SET is_active = ?, updated_at = NOW() WHERE id = ?',
         [isActive ? 1 : 0, id]
       );
 
@@ -1617,7 +1647,7 @@ router.put('/organizations/:id/status',
           uuidv4(),
           req.user.sub,
           isActive ? 'ACTIVATE_ORGANIZATION' : 'DEACTIVATE_ORGANIZATION',
-          'organizations',
+          'hotel_companies',
           id
         ]
       );
@@ -1631,11 +1661,11 @@ router.put('/organizations/:id/status',
 );
 
 /**
- * @route   DELETE /api/admin/organizations/:id
+ * @route   DELETE /api/admin/hotel_companies/:id
  * @desc    Delete organization (super admin only)
  * @access  Private (requires super admin)
  */
-router.delete('/organizations/:id',
+router.delete('/hotel_companies/:id',
   param('id').isUUID(),
   hasRoleLevel(1),
   async (req, res) => {
@@ -1649,7 +1679,7 @@ router.delete('/organizations/:id',
 
       // Check if organization has users
       const [userCheck] = await pool.query(
-        'SELECT COUNT(*) as count FROM users WHERE organization_id = ?',
+        'SELECT COUNT(*) as count FROM users WHERE hotel_company_id = ?',
         [id]
       );
 
@@ -1665,7 +1695,7 @@ router.delete('/organizations/:id',
 
       try {
         // Delete organization
-        await connection.query('DELETE FROM organizations WHERE id = ?', [id]);
+        await connection.query('DELETE FROM hotel_companies WHERE id = ?', [id]);
 
         await connection.commit();
 
@@ -1677,7 +1707,7 @@ router.delete('/organizations/:id',
             uuidv4(),
             req.user.sub,
             'DELETE_ORGANIZATION',
-            'organizations',
+            'hotel_companies',
             id
           ]
         );
@@ -1692,6 +1722,360 @@ router.delete('/organizations/:id',
     } catch (error) {
       console.error('Delete organization error:', error);
       res.status(500).json({ error: 'Failed to delete organization' });
+    }
+  }
+);
+
+// ==================== HOTEL BRANCH MANAGEMENT ====================
+
+/**
+ * @route   GET /api/admin/hotel_branches
+ * @desc    Get hotel branches (super admin sees all; others restricted to own hotel)
+ * @access  Private (requires MANAGE_HOTELS)
+ */
+router.get('/hotel_branches',
+  hasPermission(['MANAGE_HOTELS']),
+  async (req, res) => {
+    try {
+      const isSuperAdmin = req.user.role_level === 1;
+      const requestedCompanyId = req.query.companyId;
+      const effectiveCompanyId = isSuperAdmin ? requestedCompanyId : req.hotelCompanyId;
+
+      let sql = `
+        SELECT hb.*, hc.name AS company_name
+        FROM hotel_branches hb
+        JOIN hotel_companies hc ON hc.id = hb.company_id
+      `;
+      const params = [];
+
+      if (effectiveCompanyId) {
+        sql += ' WHERE hb.company_id = ?';
+        params.push(effectiveCompanyId);
+      }
+
+      sql += ' ORDER BY hb.created_at DESC';
+
+      const [rows] = await pool.query(sql, params);
+      res.json(rows);
+    } catch (error) {
+      console.error('Fetch hotel branches error:', error);
+      res.status(500).json({ error: 'Failed to fetch hotel branches' });
+    }
+  }
+);
+
+/**
+ * @route   GET /api/admin/hotel_branches/:id
+ * @desc    Get hotel branch by ID
+ * @access  Private (requires MANAGE_HOTELS)
+ */
+router.get('/hotel_branches/:id',
+  param('id').isUUID(),
+  hasPermission(['MANAGE_HOTELS']),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const isSuperAdmin = req.user.role_level === 1;
+      const { id } = req.params;
+
+      let sql = `
+        SELECT hb.*, hc.name AS company_name
+        FROM hotel_branches hb
+        JOIN hotel_companies hc ON hc.id = hb.company_id
+        WHERE hb.id = ?
+      `;
+      const params = [id];
+
+      if (!isSuperAdmin) {
+        sql += ' AND hb.company_id = ?';
+        params.push(req.hotelCompanyId);
+      }
+
+      const [rows] = await pool.query(sql, params);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      res.json(rows[0]);
+    } catch (error) {
+      console.error('Fetch hotel branch error:', error);
+      res.status(500).json({ error: 'Failed to fetch hotel branch' });
+    }
+  }
+);
+
+/**
+ * @route   POST /api/admin/hotel_branches
+ * @desc    Create hotel branch
+ * @access  Private (requires MANAGE_HOTELS)
+ */
+router.post('/hotel_branches',
+  hasPermission(['MANAGE_HOTELS']),
+  [
+    body('name').notEmpty().trim(),
+    body('branchCode').notEmpty().trim(),
+    body('companyId').optional().isUUID(),
+    body('city').optional(),
+    body('address').optional(),
+    body('phone').optional(),
+    body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const isSuperAdmin = req.user.role_level === 1;
+      const {
+        companyId,
+        name,
+        branchCode,
+        city,
+        address,
+        phone,
+        status = 'ACTIVE',
+      } = req.body;
+
+      const targetCompanyId = isSuperAdmin ? (companyId || req.hotelCompanyId) : req.hotelCompanyId;
+      if (!targetCompanyId) {
+        return res.status(400).json({ error: 'Hotel company is required' });
+      }
+
+      const [companyRows] = await pool.query(
+        'SELECT id FROM hotel_companies WHERE id = ? LIMIT 1',
+        [targetCompanyId]
+      );
+      if (companyRows.length === 0) {
+        return res.status(400).json({ error: 'Invalid hotel company' });
+      }
+
+      const [existingCode] = await pool.query(
+        'SELECT id FROM hotel_branches WHERE branch_code = ? LIMIT 1',
+        [branchCode]
+      );
+      if (existingCode.length > 0) {
+        return res.status(400).json({ error: 'Branch code already exists' });
+      }
+
+      const branchId = uuidv4();
+      await pool.query(
+        `INSERT INTO hotel_branches (
+          id, company_id, name, branch_code, city, address, phone, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [
+          branchId,
+          targetCompanyId,
+          name,
+          branchCode,
+          city || null,
+          address || null,
+          phone || null,
+          status,
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO audit_logs (id, hotel_company_id, user_id, action, table_name, entity_type, record_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          targetCompanyId,
+          req.user.sub,
+          'CREATE_HOTEL_BRANCH',
+          'hotel_branches',
+          'hotel_branch',
+          branchId,
+        ]
+      );
+
+      res.status(201).json({ message: 'Branch created successfully', branchId });
+    } catch (error) {
+      console.error('Create hotel branch error:', error);
+      res.status(500).json({ error: 'Failed to create hotel branch' });
+    }
+  }
+);
+
+/**
+ * @route   PUT /api/admin/hotel_branches/:id
+ * @desc    Update hotel branch
+ * @access  Private (requires MANAGE_HOTELS)
+ */
+router.put('/hotel_branches/:id',
+  param('id').isUUID(),
+  hasPermission(['MANAGE_HOTELS']),
+  [
+    body('companyId').optional().isUUID(),
+    body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const isSuperAdmin = req.user.role_level === 1;
+      const { id } = req.params;
+      const {
+        companyId,
+        name,
+        branchCode,
+        city,
+        address,
+        phone,
+        status,
+      } = req.body;
+
+      const [existingRows] = await pool.query('SELECT * FROM hotel_branches WHERE id = ? LIMIT 1', [id]);
+      if (existingRows.length === 0) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      const existingBranch = existingRows[0];
+      if (!isSuperAdmin && existingBranch.company_id !== req.hotelCompanyId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      if (branchCode) {
+        const [duplicateCode] = await pool.query(
+          'SELECT id FROM hotel_branches WHERE branch_code = ? AND id != ? LIMIT 1',
+          [branchCode, id]
+        );
+        if (duplicateCode.length > 0) {
+          return res.status(400).json({ error: 'Branch code already exists' });
+        }
+      }
+
+      const updates = [];
+      const params = [];
+
+      if (name !== undefined) {
+        updates.push('name = ?');
+        params.push(name);
+      }
+      if (branchCode !== undefined) {
+        updates.push('branch_code = ?');
+        params.push(branchCode);
+      }
+      if (city !== undefined) {
+        updates.push('city = ?');
+        params.push(city || null);
+      }
+      if (address !== undefined) {
+        updates.push('address = ?');
+        params.push(address || null);
+      }
+      if (phone !== undefined) {
+        updates.push('phone = ?');
+        params.push(phone || null);
+      }
+      if (status !== undefined) {
+        updates.push('status = ?');
+        params.push(status);
+      }
+
+      if (companyId !== undefined && isSuperAdmin) {
+        const [companyRows] = await pool.query(
+          'SELECT id FROM hotel_companies WHERE id = ? LIMIT 1',
+          [companyId]
+        );
+        if (companyRows.length === 0) {
+          return res.status(400).json({ error: 'Invalid hotel company' });
+        }
+
+        updates.push('company_id = ?');
+        params.push(companyId);
+      }
+
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
+
+      updates.push('updated_at = NOW()');
+      params.push(id);
+
+      await pool.query(
+        `UPDATE hotel_branches SET ${updates.join(', ')} WHERE id = ?`,
+        params
+      );
+
+      await pool.query(
+        `INSERT INTO audit_logs (id, hotel_company_id, user_id, action, table_name, entity_type, record_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          existingBranch.company_id,
+          req.user.sub,
+          'UPDATE_HOTEL_BRANCH',
+          'hotel_branches',
+          'hotel_branch',
+          id,
+        ]
+      );
+
+      res.json({ message: 'Branch updated successfully' });
+    } catch (error) {
+      console.error('Update hotel branch error:', error);
+      res.status(500).json({ error: 'Failed to update hotel branch' });
+    }
+  }
+);
+
+/**
+ * @route   DELETE /api/admin/hotel_branches/:id
+ * @desc    Delete hotel branch
+ * @access  Private (requires MANAGE_HOTELS)
+ */
+router.delete('/hotel_branches/:id',
+  param('id').isUUID(),
+  hasPermission(['MANAGE_HOTELS']),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const isSuperAdmin = req.user.role_level === 1;
+      const { id } = req.params;
+
+      const [rows] = await pool.query('SELECT * FROM hotel_branches WHERE id = ? LIMIT 1', [id]);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Branch not found' });
+      }
+
+      const branch = rows[0];
+      if (!isSuperAdmin && branch.company_id !== req.hotelCompanyId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      await pool.query('DELETE FROM hotel_branches WHERE id = ?', [id]);
+
+      await pool.query(
+        `INSERT INTO audit_logs (id, hotel_company_id, user_id, action, table_name, entity_type, record_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          branch.company_id,
+          req.user.sub,
+          'DELETE_HOTEL_BRANCH',
+          'hotel_branches',
+          'hotel_branch',
+          id,
+        ]
+      );
+
+      res.json({ message: 'Branch deleted successfully' });
+    } catch (error) {
+      console.error('Delete hotel branch error:', error);
+      res.status(500).json({ error: 'Failed to delete hotel branch' });
     }
   }
 );
@@ -1790,8 +2174,8 @@ router.get('/audit-logs/summary',
   async (req, res) => {
     try {
       const isSuperAdmin = req.user.role_level === 1;
-      const orgCondition = isSuperAdmin ? '' : 'WHERE organization_id = ?';
-      const params = isSuperAdmin ? [] : [req.organizationId];
+      const orgCondition = isSuperAdmin ? '' : 'WHERE hotel_company_id = ?';
+      const params = isSuperAdmin ? [] : [req.hotelCompanyId];
 
       // Get counts by action type
       const [actionCounts] = await pool.query(

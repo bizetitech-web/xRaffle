@@ -13,11 +13,11 @@ const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_
 
 test('audit logs capture user create and deactivate actions', { skip: !hasCreds }, async () => {
   const { token } = await loginAsAdmin();
-  const { organizationId } = await createOrganization(token);
+  const { hotelCompanyId } = await createOrganization(token);
   const viewerRoleId = await getRoleIdByName(token, 'viewer');
 
   const created = await createUser(token, {
-    organizationId,
+    hotelCompanyId,
     roleId: viewerRoleId,
     firstName: 'Audit',
     lastName: 'Target',

@@ -24,11 +24,11 @@ export const User = {
     const [rows] = await pool.query(`
       SELECT 
         u.id, u.email, u.first_name, u.last_name, u.phone,
-        u.organization_id, u.is_active, u.last_login, u.created_at,
-        o.name as organization_name, o.code as organization_code,
+        u.hotel_company_id, u.branch_id, u.is_active, u.last_login, u.created_at,
+        o.name as hotel_company_name,
         r.id as role_id, r.name as role_name, r.level as role_level
       FROM users u
-      JOIN organizations o ON u.organization_id = o.id
+      JOIN hotel_companies o ON u.hotel_company_id = o.id
       LEFT JOIN user_roles ur ON u.id = ur.user_id
       LEFT JOIN roles r ON r.id = ur.role_id
       WHERE u.id = ?
@@ -43,12 +43,13 @@ export const User = {
     
     await pool.query(
       `INSERT INTO users (
-        id, organization_id, email, password_hash, 
+        id, hotel_company_id, branch_id, email, password_hash, 
         first_name, last_name, phone, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
         userId,
-        userData.organization_id,
+        userData.hotel_company_id,
+        userData.branch_id || null,
         userData.email,
         hashedPassword,
         userData.first_name,

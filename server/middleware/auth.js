@@ -15,7 +15,7 @@ export const authenticate = async (req, res, next) => {
     
     // Check if user still exists and is active
     const [users] = await pool.query(
-      'SELECT id, organization_id, is_active FROM users WHERE id = ?',
+      'SELECT id, hotel_company_id, is_active FROM users WHERE id = ?',
       [decoded.sub]
     );
 
@@ -29,7 +29,7 @@ export const authenticate = async (req, res, next) => {
       email: decoded.email,
       role: decoded.role,
       role_level: decoded.roleLevel,
-      organization_id: decoded.organizationId
+      hotel_company_id: decoded.hotelCompanyId
     };
     
     next();

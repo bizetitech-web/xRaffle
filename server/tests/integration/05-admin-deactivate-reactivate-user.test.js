@@ -13,9 +13,9 @@ const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_
 
 test('admin can deactivate and reactivate user', { skip: !hasCreds }, async () => {
   const { token } = await loginAsAdmin();
-  const { organizationId } = await createOrganization(token);
+  const { hotelCompanyId } = await createOrganization(token);
   const roleId = await getRoleIdByName(token, 'viewer');
-  const created = await createUser(token, { organizationId, roleId });
+  const created = await createUser(token, { hotelCompanyId, roleId });
 
   await updateUserStatus(token, created.userId, false);
   let detail = await apiRequest(`/admin/users/${created.userId}`, { token });

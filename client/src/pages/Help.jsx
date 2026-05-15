@@ -59,7 +59,7 @@ const Help = () => {
         },
         {
           q: 'What should I configure first after login?',
-          a: 'Start with Organization settings, then create users and assign roles. This ensures users have the correct permissions before they access admin pages.'
+          a: 'Start with Hotels settings, then create users and assign roles. This ensures users have the correct permissions before they access admin pages.'
         },
         {
           q: 'How do I verify my access rights?',
@@ -68,7 +68,7 @@ const Help = () => {
       ]
     },
     {
-      category: 'Users and Organizations',
+      category: 'Users and Hotels',
       icon: <DocIcon sx={{ color: 'success.main' }} />,
       questions: [
         {
@@ -80,8 +80,8 @@ const Help = () => {
           a: 'In the Users page, use the status action to deactivate or reactivate an account. Deactivated users cannot sign in until reactivated.'
         },
         {
-          q: 'How do I manage organizations?',
-          a: 'Go to Administration > Organization to create and update organization records. Access to this page requires MANAGE_ORGANIZATIONS permission.'
+          q: 'How do I manage hotels?',
+          a: 'Go to Administration > Hotels to create and update hotel records. Access to this page requires MANAGE_HOTELS permission.'
         }
       ]
     },
@@ -109,7 +109,7 @@ const Help = () => {
       questions: [
         {
           q: 'What should I do if login fails?',
-          a: 'Verify email and password first. If credentials are correct, check whether your account is active and confirm your organization context with an administrator.'
+          a: 'Verify email and password first. If credentials are correct, check whether your account is active and confirm your hotel context with an administrator.'
         },
         {
           q: 'How can an admin reset a user password?',

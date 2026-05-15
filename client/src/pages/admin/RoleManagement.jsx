@@ -121,15 +121,25 @@ const RoleManagement = () => {
     }
   };
 
-  const handleOpenDialog = (role = null) => {
+  const handleOpenDialog = async (role = null) => {
     if (role) {
-      setSelectedRole(role);
-      setFormData({
-        name: role.name || '',
-        description: role.description || '',
-        level: role.level?.toString() || '',
-        permissions: role.permissions?.map(p => p.id) || [],
-      });
+      try {
+        const detailResponse = await axios.get(`${API_BASE}/admin/roles/${role.id}`);
+        const detail = detailResponse.data || role;
+
+        setSelectedRole(detail);
+        setFormData({
+          name: detail.name || '',
+          description: detail.description || '',
+          level: detail.level?.toString() || '',
+          permissions: Array.isArray(detail.permissions)
+            ? detail.permissions.map((p) => p?.id).filter(Boolean)
+            : [],
+        });
+      } catch (err) {
+        setError(err.response?.data?.error || 'Failed to load role details');
+        return;
+      }
     } else {
       setSelectedRole(null);
       setFormData({
