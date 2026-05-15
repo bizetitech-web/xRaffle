@@ -60,7 +60,7 @@ const Login = () => {
 
     const result = await login(formData.email, formData.password);
     if (result.success) {
-      navigate('/admin/users');
+      navigate('/dashboard');
     }
   };
 
@@ -93,9 +93,6 @@ const Login = () => {
             </Avatar>
             <Typography component="h1" variant="h6" sx={{ color: 'text.primary', mt: 1.25 }}>
               Sign in to xRaffle
-            </Typography>
-            <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
-              Administrative Access Portal
             </Typography>
           </Box>
 

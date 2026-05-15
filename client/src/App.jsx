@@ -7,6 +7,7 @@ import PrivateRoute from './components/auth/PrivateRoute';
 import RoleGuard from './components/auth/RoleGuard';
 import Layout from './components/layout/Layout';
 import Login from './pages/auth/Login';
+import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
 import Help from './pages/Help';
 
@@ -30,7 +31,15 @@ function App() {
             {/* Protected routes with Layout */}
             <Route path="/" element={
               <PrivateRoute>
-                <Navigate to="/admin/users" replace />
+                <Navigate to="/dashboard" replace />
+              </PrivateRoute>
+            } />
+
+            <Route path="/dashboard" element={
+              <PrivateRoute>
+                <Layout>
+                  <Dashboard />
+                </Layout>
               </PrivateRoute>
             } />
             
@@ -94,7 +103,7 @@ function App() {
             } />
             
             {/* Redirect unknown routes */}
-            <Route path="*" element={<Navigate to="/admin/users" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
