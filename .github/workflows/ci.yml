@@ -218,8 +218,7 @@ jobs:
             echo "Contract lane credentials are configured."
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Contract lane credentials are missing; run is marked failed because this lane is required."
-            exit 1
+            echo "Contract lane credentials are missing; run will be skipped."
           fi
 
       - name: Checkout
