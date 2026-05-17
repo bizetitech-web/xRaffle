@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'node:http';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -13,6 +14,7 @@ import gameRoutes from './routes/gameRoutes.js';
 import winnerRoutes from './routes/winnerRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
 import phase1ContextRouter from './src/contexts/index.js';
+import { realtimeGateway } from './src/contexts/realtime/realtime.gateway.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -146,7 +148,10 @@ app.get('*', (req, res) => {
 // Global error middleware should be registered after routes.
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+realtimeGateway.attachServer(server);
+
+server.listen(PORT, () => {
   logInfo('Server started', {
     port: PORT,
     staticPath: join(__dirname, '../client'),
@@ -154,6 +159,8 @@ app.listen(PORT, () => {
     endpoints: {
       health: `http://localhost:${PORT}/api/health`,
       dbStatus: `http://localhost:${PORT}/api/db-status`,
+      realtimeHealth: `http://localhost:${PORT}/api/realtime/health`,
+      websocket: `ws://localhost:${PORT}/socket.io`,
       app: `http://localhost:${PORT}/`,
     },
   });
