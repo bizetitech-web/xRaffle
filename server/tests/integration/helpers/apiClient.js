@@ -76,7 +76,18 @@ export async function getRoleIdByName(token, roleName) {
     throw new Error(`Role fetch failed (${response.status}): ${JSON.stringify(json)}`);
   }
 
-  const role = json.find((item) => item.name === roleName);
+  const normalize = (value) => String(value || '').trim().toLowerCase().replace(/[_\-\s]+/g, '');
+  const requested = normalize(roleName);
+
+  const aliasMap = {
+    orgadmin: ['orgadmin', 'hoteladmin'],
+    manager: ['manager', 'branchmanager'],
+    viewer: ['viewer', 'gamer'],
+  };
+
+  const acceptableNames = new Set(aliasMap[requested] || [requested]);
+
+  const role = json.find((item) => acceptableNames.has(normalize(item.name)));
   if (!role?.id) {
     throw new Error(`Role not found: ${roleName}`);
   }

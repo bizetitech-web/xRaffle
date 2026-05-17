@@ -4,6 +4,16 @@ INSERT IGNORE INTO roles (id, name, description, level) VALUES
 ('79a386a7-207b-11f1-89b6-a4e078b831cc', 'manager', 'Hotel manager', 3),
 ('79a386a8-207b-11f1-89b6-a4e078b831cc', 'viewer', 'Read-only user', 8);
 
+-- Ensure legacy databases converge to canonical role names/levels for fixed role IDs.
+UPDATE roles SET name = 'super_admin', description = 'System super administrator', level = 1
+WHERE id = '79a386a5-207b-11f1-89b6-a4e078b831cc';
+UPDATE roles SET name = 'org_admin', description = 'Hotel administrator', level = 2
+WHERE id = '79a386a6-207b-11f1-89b6-a4e078b831cc';
+UPDATE roles SET name = 'manager', description = 'Hotel manager', level = 3
+WHERE id = '79a386a7-207b-11f1-89b6-a4e078b831cc';
+UPDATE roles SET name = 'viewer', description = 'Read-only user', level = 8
+WHERE id = '79a386a8-207b-11f1-89b6-a4e078b831cc';
+
 INSERT IGNORE INTO permissions (id, name, module, description) VALUES
 ('89a386a1-207b-11f1-89b6-a4e078b831cc', 'MANAGE_USERS', 'admin', 'Create, update, and deactivate users'),
 ('89a386a2-207b-11f1-89b6-a4e078b831cc', 'MANAGE_ROLES', 'admin', 'Create and manage roles and role permissions'),
@@ -31,6 +41,12 @@ SELECT r.id, p.id
 FROM roles r
 JOIN permissions p ON p.name IN ('MANAGE_USERS', 'MANAGE_HOTELS', 'VIEW_AUDIT_LOGS', 'VIEW_WALLET', 'TOPUP_WALLET', 'MANAGE_GAMES', 'VIEW_GAMES', 'SELL_CARDS', 'RUN_DRAWS', 'VIEW_WINNERS', 'CLAIM_PRIZES', 'VIEW_REPORTS')
 WHERE r.name = 'org_admin';
+
+-- Backfill required org_admin permissions by stable role ID for legacy rows.
+INSERT IGNORE INTO role_permissions (role_id, permission_id)
+SELECT '79a386a6-207b-11f1-89b6-a4e078b831cc', p.id
+FROM permissions p
+WHERE p.name IN ('MANAGE_USERS', 'MANAGE_HOTELS', 'VIEW_AUDIT_LOGS', 'VIEW_WALLET', 'TOPUP_WALLET', 'MANAGE_GAMES', 'VIEW_GAMES', 'SELL_CARDS', 'RUN_DRAWS', 'VIEW_WINNERS', 'CLAIM_PRIZES', 'VIEW_REPORTS');
 
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
