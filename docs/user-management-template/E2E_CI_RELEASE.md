@@ -43,7 +43,7 @@ Jobs:
 
 1. build-and-test
 2. e2e-reports (runs only when E2E secrets are configured)
-3. integration-contracts (opt-in, non-blocking DB contract/context lane)
+3. integration-contracts (required DB contract/context lane)
 
 build-and-test includes:
 
@@ -83,13 +83,13 @@ npm --prefix server run test:integration:contracts
 
 Triggering in CI:
 
-- Manual: workflow_dispatch with input run_contracts=true.
-- Variable-gated: repository variable CI_RUN_DB_CONTRACTS=true.
+- Automatic on push and pull_request.
+- Manual workflow_dispatch supported with input run_contracts=true.
 
-Blocking mode toggle:
+Blocking mode:
 
-- CI_CONTRACTS_BLOCKING=true makes the integration-contracts job blocking (continue-on-error disabled).
-- Any other value (or unset) keeps the lane informational (continue-on-error enabled).
+- integration-contracts is required and blocking.
+- Missing E2E_ADMIN_EMAIL or E2E_ADMIN_PASSWORD causes the job to fail fast.
 
 Required secrets:
 
@@ -108,12 +108,10 @@ Expected skip behavior:
 - If E2E_ADMIN_EMAIL or E2E_ADMIN_PASSWORD is missing, the integration-contracts job logs a skip message and exits cleanly.
 - On local runs without TEST_ADMIN_EMAIL/TEST_ADMIN_PASSWORD, tests are discovered and skipped by design.
 
-Promotion path (informational to blocking):
+Phase 1 closure note:
 
-1. Keep continue-on-error enabled while collecting 1-2 weeks of signal.
-2. Track flakes/failures and resolve deterministic data/setup issues.
-3. Remove continue-on-error in ci.yml after stability is demonstrated.
-4. Set CI_CONTRACTS_BLOCKING=true and CI_RUN_DB_CONTRACTS=true for protected branches when ready to enforce continuously.
+1. Contracts lane is now enforced by default as part of the required CI signal.
+2. Keep E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD configured in repository secrets for all protected branches.
 
 ## Release Workflow
 

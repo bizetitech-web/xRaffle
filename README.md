@@ -7,6 +7,7 @@ A template-ready fullstack starter focused on authentication, organizations, use
 ## Status
 
 - Phase 3 cleanup and template hardening are complete.
+- Phase 1 context contracts are complete and enforced in CI.
 - The codebase is prepared for public/internal template use.
 - Historical phase execution documents are available under docs/user-management-template and have an archive plan.
 
@@ -84,6 +85,8 @@ DB-backed integration contracts lane requires:
 - TEST_ADMIN_EMAIL
 - TEST_ADMIN_PASSWORD
 - TEST_BASE_URL (defaults to http://localhost:5000/api)
+
+In GitHub Actions, the integration contracts lane now runs on push/pull_request and is required to pass.
 
 From client folder:
 

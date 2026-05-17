@@ -86,3 +86,9 @@ Quick checks when run mode is expected:
 - Integration tests run successfully (or skip intentionally when credentials are not configured).
 - Database readiness reports status ok.
 - Optional e2e smoke passes or skips with explicit credential notice.
+
+## Phase 1 Closure Criteria
+
+- `npm --prefix server run test:integration:contracts` passes in a DB-backed environment.
+- Full server integration suite passes (`npm --prefix server run test:integration`).
+- CI integration-contracts job is required and blocking on push/pull_request.
