@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { CssBaseline } from '@mui/material';
+import { Box, CircularProgress, CssBaseline, Typography } from '@mui/material';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import PrivateRoute from './components/auth/PrivateRoute';
@@ -17,6 +17,29 @@ import RoleManagement from './pages/admin/RoleManagement';
 import Permissions from './pages/admin/Permissions';
 import OrganizationSettings from './pages/admin/OrganizationSettings';
 import BranchManagement from './pages/admin/BranchManagement';
+import GamesManagement from './pages/admin/GamesManagement';
+
+const GlobalOverviewReport = lazy(() => import('./pages/admin/GlobalOverviewReport'));
+const BranchDailyReport = lazy(() => import('./pages/admin/BranchDailyReport'));
+const CompanyWalletReport = lazy(() => import('./pages/admin/CompanyWalletReport'));
+
+const reportsFallback = (
+  <Box
+    sx={{
+      minHeight: 220,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 1.5,
+    }}
+  >
+    <CircularProgress size={26} />
+    <Typography variant="body2" color="text.secondary">
+      Loading report...
+    </Typography>
+  </Box>
+);
 
 function App() {
   return (
@@ -108,6 +131,52 @@ function App() {
                 <RoleGuard requiredPermissions={['MANAGE_HOTELS']}>
                   <Layout>
                     <BranchManagement />
+                  </Layout>
+                </RoleGuard>
+              </PrivateRoute>
+            } />
+
+            <Route path="/admin/games" element={
+              <PrivateRoute>
+                <RoleGuard requiredPermissions={['VIEW_GAMES']}>
+                  <Layout>
+                    <GamesManagement />
+                  </Layout>
+                </RoleGuard>
+              </PrivateRoute>
+            } />
+
+            <Route path="/admin/reports/global" element={
+              <PrivateRoute>
+                <RoleGuard requiredPermissions={['VIEW_GLOBAL_REPORTS']}>
+                  <Layout>
+                    <Suspense fallback={reportsFallback}>
+                      <GlobalOverviewReport />
+                    </Suspense>
+                  </Layout>
+                </RoleGuard>
+              </PrivateRoute>
+            } />
+
+            <Route path="/admin/reports/branch-daily" element={
+              <PrivateRoute>
+                <RoleGuard requiredPermissions={['VIEW_REPORTS']}>
+                  <Layout>
+                    <Suspense fallback={reportsFallback}>
+                      <BranchDailyReport />
+                    </Suspense>
+                  </Layout>
+                </RoleGuard>
+              </PrivateRoute>
+            } />
+
+            <Route path="/admin/reports/company-wallet" element={
+              <PrivateRoute>
+                <RoleGuard requiredPermissions={['VIEW_REPORTS']}>
+                  <Layout>
+                    <Suspense fallback={reportsFallback}>
+                      <CompanyWalletReport />
+                    </Suspense>
                   </Layout>
                 </RoleGuard>
               </PrivateRoute>

@@ -127,3 +127,40 @@ export async function updateUserStatus(token, userId, isActive) {
 
   return json;
 }
+
+export async function getWallet(token, hotelCompanyId) {
+  const { response, json } = await apiRequest(`/admin/wallets/company/${hotelCompanyId}`, {
+    token,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Get wallet failed (${response.status}): ${JSON.stringify(json)}`);
+  }
+
+  return json;
+}
+
+export async function topupWallet(token, hotelCompanyId, {
+  amount,
+  paymentMethod = 'CASH',
+  referenceNumber,
+} = {}) {
+  const safeAmount = amount ?? 1;
+  const safeReference = referenceNumber || `INT-TOPUP-${uniqueSuffix()}`;
+
+  const { response, json } = await apiRequest(`/admin/wallets/company/${hotelCompanyId}/topups`, {
+    method: 'POST',
+    token,
+    body: {
+      amount: safeAmount,
+      paymentMethod,
+      referenceNumber: safeReference,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Wallet topup failed (${response.status}): ${JSON.stringify(json)}`);
+  }
+
+  return json;
+}

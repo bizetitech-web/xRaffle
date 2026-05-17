@@ -15,6 +15,13 @@ Use this checklist before any template release.
 - Run: npm --prefix server run test:integration
 - Run: npm --prefix server run verify:db
 - Optional: npm --prefix client run e2e
+- If running reports E2E in CI, confirm `e2e-reports` gate behavior:
+	- With `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` secrets present, reports E2E executes.
+	- Without those secrets, workflow logs a clean skip notice and does not fail the pipeline.
+- Confirm Playwright artifacts are uploaded on reports E2E failure (`client/test-results/`, `client/playwright-report/`).
+- Confirm required CI secrets exist for reports E2E execution:
+	- `E2E_ADMIN_EMAIL`
+	- `E2E_ADMIN_PASSWORD`
 
 ## Template Readiness
 

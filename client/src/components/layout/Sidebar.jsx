@@ -16,12 +16,15 @@ import { useTheme as useMuiTheme } from '@mui/material/styles';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import {
+  Dashboard as DashboardIcon,
   Settings as SettingsIcon,
   Help as HelpIcon,
   Lock as LockIcon,
   Person as UsersIcon,
+  SportsEsports as GamesIcon,
   Security as RolesIcon,
   Business as BusinessIcon,
+  Insights as InsightsIcon,
 } from '@mui/icons-material';
 const drawerWidth = 240;
 const miniDrawerWidth = 72;
@@ -43,7 +46,13 @@ const Sidebar = ({ open, variant, onClose }) => {
     return true;
   };
 
-  const mainMenuItems = [];
+  const mainMenuItems = [
+    {
+      text: 'Dashboard',
+      icon: <DashboardIcon />,
+      path: '/dashboard',
+    },
+  ];
 
   // Admin menu items (only for super_admin and org_admin)
   const adminMenuItems = [
@@ -77,6 +86,33 @@ const Sidebar = ({ open, variant, onClose }) => {
       path: '/admin/branches',
       requiredPermissions: ['MANAGE_HOTELS']
     },
+    {
+      text: 'Games',
+      icon: <GamesIcon />,
+      path: '/admin/games',
+      requiredPermissions: ['VIEW_GAMES']
+    },
+  ];
+
+  const reportMenuItems = [
+    {
+      text: 'Branch Daily',
+      icon: <InsightsIcon />,
+      path: '/admin/reports/branch-daily',
+      requiredPermissions: ['VIEW_REPORTS']
+    },
+    {
+      text: 'Company Wallet',
+      icon: <InsightsIcon />,
+      path: '/admin/reports/company-wallet',
+      requiredPermissions: ['VIEW_REPORTS']
+    },
+    {
+      text: 'Global Reports',
+      icon: <InsightsIcon />,
+      path: '/admin/reports/global',
+      requiredPermissions: ['VIEW_GLOBAL_REPORTS']
+    },
   ];
 
   // System menu items
@@ -98,6 +134,7 @@ const Sidebar = ({ open, variant, onClose }) => {
   const filteredMainItems = mainMenuItems.filter(canShowMenuItem);
   const filteredAdminItems = adminMenuItems.filter(canShowMenuItem);
   const filteredSystemItems = systemMenuItems.filter(canShowMenuItem);
+  const filteredReportItems = reportMenuItems.filter(canShowMenuItem);
 
   const renderMenuItem = (item) => (
     <ListItem key={item.text} disablePadding sx={{ display: 'block' }}>
@@ -182,6 +219,23 @@ const Sidebar = ({ open, variant, onClose }) => {
             )}
             <List>
               {filteredAdminItems.map(renderMenuItem)}
+            </List>
+            <Divider sx={{ borderColor: muiTheme.palette.divider }} />
+          </>
+        )}
+
+        {/* Reports Section */}
+        {filteredReportItems.length > 0 && (
+          <>
+            {!isMini && (
+              <Box sx={{ px: 2, py: 1 }}>
+                <Typography variant="subtitle2" sx={{ color: muiTheme.palette.text.secondary }}>
+                  REPORTS
+                </Typography>
+              </Box>
+            )}
+            <List>
+              {filteredReportItems.map(renderMenuItem)}
             </List>
             <Divider sx={{ borderColor: muiTheme.palette.divider }} />
           </>

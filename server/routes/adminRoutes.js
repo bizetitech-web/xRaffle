@@ -1478,31 +1478,50 @@ router.post('/hotel_companies',
 
       const hotelCompanyId = uuidv4();
 
-      await pool.query(
-        `INSERT INTO hotel_companies (
-          id, name, email, phone, status, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
-        [
-          hotelCompanyId,
-          name,
-          email || null,
-          phone || null,
-          status
-        ]
-      );
+      const connection = await pool.getConnection();
+      await connection.beginTransaction();
 
-      // Log action
-      await pool.query(
-        `INSERT INTO audit_logs (id, user_id, action, table_name, record_id)
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          uuidv4(),
-          req.user.sub,
-          'CREATE_ORGANIZATION',
-          'hotel_companies',
-          hotelCompanyId
-        ]
-      );
+      try {
+        await connection.query(
+          `INSERT INTO hotel_companies (
+            id, name, email, phone, status, is_active, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+          [
+            hotelCompanyId,
+            name,
+            email || null,
+            phone || null,
+            status
+          ]
+        );
+
+        const walletId = uuidv4();
+        await connection.query(
+          `INSERT INTO wallet_accounts (
+            id, company_id, balance, currency, is_active, created_at, updated_at
+          ) VALUES (?, ?, 0.00, 'ETB', 1, NOW(), NOW())`,
+          [walletId, hotelCompanyId]
+        );
+
+        await connection.query(
+          `INSERT INTO audit_logs (id, user_id, action, table_name, record_id)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            req.user.sub,
+            'CREATE_ORGANIZATION',
+            'hotel_companies',
+            hotelCompanyId
+          ]
+        );
+
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
 
       res.status(201).json({
         message: 'Organization created successfully',
@@ -1722,6 +1741,295 @@ router.delete('/hotel_companies/:id',
     } catch (error) {
       console.error('Delete organization error:', error);
       res.status(500).json({ error: 'Failed to delete organization' });
+    }
+  }
+);
+
+// ==================== WALLET MANAGEMENT ====================
+
+/**
+ * @route   GET /api/admin/wallets/company/:companyId
+ * @desc    Get wallet account for a company
+ * @access  Private (requires VIEW_WALLET)
+ */
+router.get('/wallets/company/:companyId',
+  param('companyId').isUUID(),
+  hasPermission(['VIEW_WALLET']),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { companyId } = req.params;
+      const isSuperAdmin = req.user.role_level === 1;
+
+      if (!isSuperAdmin && companyId !== req.hotelCompanyId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const [companyRows] = await pool.query(
+        'SELECT id FROM hotel_companies WHERE id = ? LIMIT 1',
+        [companyId]
+      );
+
+      if (companyRows.length === 0) {
+        return res.status(404).json({ error: 'Hotel not found' });
+      }
+
+      const connection = await pool.getConnection();
+      await connection.beginTransaction();
+
+      try {
+        let [walletRows] = await connection.query(
+          'SELECT * FROM wallet_accounts WHERE company_id = ? LIMIT 1 FOR UPDATE',
+          [companyId]
+        );
+
+        if (walletRows.length === 0) {
+          const walletId = uuidv4();
+          await connection.query(
+            `INSERT INTO wallet_accounts (
+              id, company_id, balance, currency, is_active, created_at, updated_at
+            ) VALUES (?, ?, 0.00, 'ETB', 1, NOW(), NOW())`,
+            [walletId, companyId]
+          );
+
+          [walletRows] = await connection.query(
+            'SELECT * FROM wallet_accounts WHERE id = ? LIMIT 1',
+            [walletId]
+          );
+        }
+
+        await connection.commit();
+
+        const wallet = walletRows[0];
+        return res.json({
+          walletId: wallet.id,
+          companyId: wallet.company_id,
+          balance: Number(wallet.balance),
+          currency: wallet.currency,
+          isActive: !!wallet.is_active,
+          updatedAt: wallet.updated_at,
+        });
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+    } catch (error) {
+      console.error('Fetch wallet error:', error);
+      res.status(500).json({ error: 'Failed to fetch wallet' });
+    }
+  }
+);
+
+/**
+ * @route   POST /api/admin/wallets/company/:companyId/topups
+ * @desc    Top up company wallet and write transaction ledger
+ * @access  Private (requires TOPUP_WALLET)
+ */
+router.post('/wallets/company/:companyId/topups',
+  param('companyId').isUUID(),
+  [
+    body('amount').isFloat({ gt: 0 }),
+    body('paymentMethod').isIn(['CASH', 'TELEBIRR', 'CBEBIRR', 'BANK', 'OTHER']),
+    body('referenceNumber').optional().isString().trim(),
+  ],
+  hasPermission(['TOPUP_WALLET']),
+  async (req, res) => {
+    const connection = await pool.getConnection();
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { companyId } = req.params;
+      const isSuperAdmin = req.user.role_level === 1;
+
+      if (!isSuperAdmin && companyId !== req.hotelCompanyId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const amount = Number(req.body.amount);
+      const paymentMethod = String(req.body.paymentMethod || '').toUpperCase();
+      const referenceNumber = req.body.referenceNumber || null;
+
+      await connection.beginTransaction();
+
+      const [companyRows] = await connection.query(
+        'SELECT id FROM hotel_companies WHERE id = ? LIMIT 1',
+        [companyId]
+      );
+      if (companyRows.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ error: 'Hotel not found' });
+      }
+
+      let [walletRows] = await connection.query(
+        'SELECT * FROM wallet_accounts WHERE company_id = ? LIMIT 1 FOR UPDATE',
+        [companyId]
+      );
+
+      if (walletRows.length === 0) {
+        const walletId = uuidv4();
+        await connection.query(
+          `INSERT INTO wallet_accounts (
+            id, company_id, balance, currency, is_active, created_at, updated_at
+          ) VALUES (?, ?, 0.00, 'ETB', 1, NOW(), NOW())`,
+          [walletId, companyId]
+        );
+
+        [walletRows] = await connection.query(
+          'SELECT * FROM wallet_accounts WHERE id = ? LIMIT 1 FOR UPDATE',
+          [walletId]
+        );
+      }
+
+      const wallet = walletRows[0];
+      const balanceBefore = Number(wallet.balance);
+      const balanceAfter = balanceBefore + amount;
+
+      const topupId = uuidv4();
+      const walletTransactionId = uuidv4();
+
+      await connection.query(
+        `INSERT INTO wallet_topups (
+          id, wallet_id, amount, payment_method, reference_number, approved_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [topupId, wallet.id, amount, paymentMethod, referenceNumber, req.user.sub]
+      );
+
+      await connection.query(
+        `INSERT INTO wallet_transactions (
+          id, wallet_id, transaction_type, amount, balance_before, balance_after,
+          reference_type, reference_id, description, created_by, created_at
+        ) VALUES (?, ?, 'TOPUP', ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          walletTransactionId,
+          wallet.id,
+          amount,
+          balanceBefore,
+          balanceAfter,
+          'WALLET_TOPUP',
+          topupId,
+          'Wallet top-up',
+          req.user.sub,
+        ]
+      );
+
+      await connection.query(
+        'UPDATE wallet_accounts SET balance = ?, updated_at = NOW() WHERE id = ?',
+        [balanceAfter, wallet.id]
+      );
+
+      await connection.query(
+        `INSERT INTO audit_logs (id, hotel_company_id, user_id, action, table_name, record_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+        [uuidv4(), companyId, req.user.sub, 'TOPUP_WALLET', 'wallet_topups', topupId]
+      );
+
+      await connection.commit();
+
+      res.status(201).json({
+        topupId,
+        walletTransactionId,
+        newBalance: balanceAfter,
+      });
+    } catch (error) {
+      await connection.rollback();
+      console.error('Wallet top-up error:', error);
+      res.status(500).json({ error: 'Failed to top up wallet' });
+    } finally {
+      connection.release();
+    }
+  }
+);
+
+/**
+ * @route   GET /api/admin/wallets/company/:companyId/transactions
+ * @desc    List wallet transactions for a company wallet
+ * @access  Private (requires VIEW_WALLET)
+ */
+router.get('/wallets/company/:companyId/transactions',
+  param('companyId').isUUID(),
+  query('page').optional().isInt({ min: 1 }),
+  query('pageSize').optional().isInt({ min: 1, max: 200 }),
+  hasPermission(['VIEW_WALLET']),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const { companyId } = req.params;
+      const isSuperAdmin = req.user.role_level === 1;
+
+      if (!isSuperAdmin && companyId !== req.hotelCompanyId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const page = Number(req.query.page || 1);
+      const pageSize = Number(req.query.pageSize || 20);
+      const offset = (page - 1) * pageSize;
+
+      const [walletRows] = await pool.query(
+        'SELECT id FROM wallet_accounts WHERE company_id = ? LIMIT 1',
+        [companyId]
+      );
+
+      if (walletRows.length === 0) {
+        return res.json({ items: [], page, pageSize, total: 0 });
+      }
+
+      const walletId = walletRows[0].id;
+
+      const [countRows] = await pool.query(
+        'SELECT COUNT(*) AS total FROM wallet_transactions WHERE wallet_id = ?',
+        [walletId]
+      );
+
+      const [items] = await pool.query(
+        `SELECT
+          wt.id,
+          wt.transaction_type AS transactionType,
+          wt.amount,
+          wt.balance_before AS balanceBefore,
+          wt.balance_after AS balanceAfter,
+          wt.reference_type AS referenceType,
+          wt.reference_id AS referenceId,
+          wtop.reference_number AS referenceNumber,
+          wt.description,
+          wt.created_by AS createdBy,
+          wt.created_at AS createdAt
+         FROM wallet_transactions wt
+         LEFT JOIN wallet_topups wtop
+           ON wt.reference_type = 'WALLET_TOPUP'
+          AND wtop.id = wt.reference_id
+         WHERE wt.wallet_id = ?
+         ORDER BY wt.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [walletId, pageSize, offset]
+      );
+
+      res.json({
+        items: items.map((row) => ({
+          ...row,
+          amount: Number(row.amount),
+          balanceBefore: Number(row.balanceBefore),
+          balanceAfter: Number(row.balanceAfter),
+        })),
+        page,
+        pageSize,
+        total: Number(countRows[0].total || 0),
+      });
+    } catch (error) {
+      console.error('Fetch wallet transactions error:', error);
+      res.status(500).json({ error: 'Failed to fetch wallet transactions' });
     }
   }
 );

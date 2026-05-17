@@ -41,7 +41,8 @@ import {
   CheckCircle as ActiveIcon,
   Email as EmailIcon,
   Phone as PhoneIcon,
-  LocationOn as LocationIcon,
+  AccountBalanceWallet as WalletIcon,
+  AttachMoney as MoneyIcon,
 } from '@mui/icons-material';
 import { DataGrid } from '@mui/x-data-grid';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
@@ -63,6 +64,17 @@ const OrganizationSettings = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [orgStats, setOrgStats] = useState({});
+  const [selectedWalletOrgId, setSelectedWalletOrgId] = useState('');
+  const [walletInfo, setWalletInfo] = useState(null);
+  const [walletTransactions, setWalletTransactions] = useState([]);
+  const [walletPagination, setWalletPagination] = useState({ page: 1, pageSize: 10, total: 0 });
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletSubmitting, setWalletSubmitting] = useState(false);
+  const [topupData, setTopupData] = useState({
+    amount: '',
+    paymentMethod: 'CASH',
+    referenceNumber: '',
+  });
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -80,6 +92,14 @@ const OrganizationSettings = () => {
       setLoading(true);
       const response = await axios.get(`${API_BASE}/admin/hotel_companies`);
       setOrganizations(response.data);
+
+      if (response.data.length > 0) {
+        const selectedStillExists = response.data.some((org) => org.id === selectedWalletOrgId);
+        const nextSelectedId = selectedStillExists ? selectedWalletOrgId : response.data[0].id;
+        setSelectedWalletOrgId(nextSelectedId);
+      } else {
+        setSelectedWalletOrgId('');
+      }
       
       // Fetch stats for each hotel
       const stats = {};
@@ -98,6 +118,81 @@ const OrganizationSettings = () => {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedWalletOrgId) {
+      fetchWalletData(selectedWalletOrgId, walletPagination.page, walletPagination.pageSize);
+    } else {
+      setWalletInfo(null);
+      setWalletTransactions([]);
+      setWalletPagination((prev) => ({ ...prev, total: 0 }));
+    }
+  }, [selectedWalletOrgId]);
+
+  const fetchWalletData = async (companyId, page = 1, pageSize = 10) => {
+    try {
+      setWalletLoading(true);
+
+      const [walletRes, txRes] = await Promise.all([
+        axios.get(`${API_BASE}/admin/wallets/company/${companyId}`),
+        axios.get(`${API_BASE}/admin/wallets/company/${companyId}/transactions?page=${page}&pageSize=${pageSize}`),
+      ]);
+
+      setWalletInfo(walletRes.data);
+      setWalletTransactions(txRes.data?.items || []);
+      setWalletPagination({
+        page: txRes.data?.page || page,
+        pageSize: txRes.data?.pageSize || pageSize,
+        total: txRes.data?.total || 0,
+      });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to fetch wallet data');
+    } finally {
+      setWalletLoading(false);
+    }
+  };
+
+  const handleTopupChange = (e) => {
+    const { name, value } = e.target;
+    setTopupData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const handleTopupSubmit = async () => {
+    if (!selectedWalletOrgId) {
+      setError('Please select a hotel first');
+      return;
+    }
+
+    const amount = Number(topupData.amount);
+    if (!amount || amount <= 0) {
+      setError('Top-up amount must be greater than 0');
+      return;
+    }
+
+    try {
+      setWalletSubmitting(true);
+      setError(null);
+
+      await axios.post(`${API_BASE}/admin/wallets/company/${selectedWalletOrgId}/topups`, {
+        amount,
+        paymentMethod: topupData.paymentMethod,
+        referenceNumber: topupData.referenceNumber || null,
+      });
+
+      setSuccess('Wallet topped up successfully');
+      setTopupData({ amount: '', paymentMethod: 'CASH', referenceNumber: '' });
+
+      await fetchWalletData(selectedWalletOrgId, 1, walletPagination.pageSize);
+      await fetchOrganizations();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to top up wallet');
+    } finally {
+      setWalletSubmitting(false);
     }
   };
 
@@ -448,7 +543,198 @@ const OrganizationSettings = () => {
               borderTop: `1px solid ${muiTheme.palette.divider}`,
             },
           }}
+          onRowClick={(params) => setSelectedWalletOrgId(params.row.id)}
         />
+      </Paper>
+
+      {/* Wallet Section */}
+      <Paper sx={{ bgcolor: 'background.paper', p: 3, mt: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <WalletIcon sx={{ color: '#FF8A00' }} />
+            <Typography variant="h6" sx={{ color: 'text.primary' }}>
+              Wallet Management
+            </Typography>
+          </Box>
+
+          <FormControl sx={{ minWidth: 280 }}>
+            <InputLabel sx={{ color: 'text.secondary' }}>Hotel</InputLabel>
+            <Select
+              value={selectedWalletOrgId}
+              label="Hotel"
+              onChange={(e) => setSelectedWalletOrgId(e.target.value)}
+              sx={{
+                color: 'text.primary',
+                bgcolor: 'background.default',
+                '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+              }}
+            >
+              {hotel_companies.map((org) => (
+                <MenuItem key={org.id} value={org.id}>
+                  {org.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+
+        {walletLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+          <>
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={4}>
+                <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    Current Balance
+                  </Typography>
+                  <Typography variant="h4" sx={{ color: '#10b981', mt: 1, fontWeight: 700 }}>
+                    {(walletInfo?.balance || 0).toLocaleString()} {walletInfo?.currency || 'ETB'}
+                  </Typography>
+                </Paper>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    Wallet Status
+                  </Typography>
+                  <Chip
+                    label={walletInfo?.isActive ? 'Active' : 'Inactive'}
+                    size="small"
+                    sx={{
+                      mt: 1,
+                      bgcolor: walletInfo?.isActive ? '#10b98120' : '#f4433620',
+                      color: walletInfo?.isActive ? '#10b981' : '#f44336',
+                    }}
+                  />
+                </Paper>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
+                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    Transactions Logged
+                  </Typography>
+                  <Typography variant="h4" sx={{ color: '#3b82f6', mt: 1, fontWeight: 700 }}>
+                    {walletPagination.total || 0}
+                  </Typography>
+                </Paper>
+              </Grid>
+            </Grid>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={3}>
+                <TextField
+                  fullWidth
+                  label="Top-up Amount"
+                  name="amount"
+                  type="number"
+                  value={topupData.amount}
+                  onChange={handleTopupChange}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <MoneyIcon sx={{ color: 'text.secondary' }} />
+                      </InputAdornment>
+                    ),
+                  }}
+                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
+                />
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <FormControl fullWidth>
+                  <InputLabel sx={{ color: 'text.secondary' }}>Payment Method</InputLabel>
+                  <Select
+                    name="paymentMethod"
+                    value={topupData.paymentMethod}
+                    onChange={handleTopupChange}
+                    label="Payment Method"
+                    sx={{
+                      color: 'text.primary',
+                      bgcolor: 'background.default',
+                      '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+                    }}
+                  >
+                    <MenuItem value="CASH">Cash</MenuItem>
+                    <MenuItem value="TELEBIRR">Telebirr</MenuItem>
+                    <MenuItem value="CBEBIRR">CBEBirr</MenuItem>
+                    <MenuItem value="BANK">Bank</MenuItem>
+                    <MenuItem value="OTHER">Other</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Reference Number (optional)"
+                  name="referenceNumber"
+                  value={topupData.referenceNumber}
+                  onChange={handleTopupChange}
+                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'background.default' } }}
+                />
+              </Grid>
+              <Grid item xs={12} md={2}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  onClick={handleTopupSubmit}
+                  disabled={walletSubmitting || !selectedWalletOrgId}
+                  sx={{
+                    height: '56px',
+                    bgcolor: '#FF8A00',
+                    '&:hover': { bgcolor: '#CC6E00' },
+                  }}
+                >
+                  {walletSubmitting ? 'Processing...' : 'Top Up'}
+                </Button>
+              </Grid>
+            </Grid>
+
+            <Typography variant="subtitle1" sx={{ color: 'text.primary', mb: 1 }}>
+              Recent Transactions
+            </Typography>
+            <Paper sx={{ bgcolor: 'background.default', maxHeight: 320, overflow: 'auto' }}>
+              {walletTransactions.length === 0 ? (
+                <Typography sx={{ color: 'text.secondary', p: 2 }}>
+                  No wallet transactions found for this hotel.
+                </Typography>
+              ) : (
+                <Box>
+                  {walletTransactions.map((tx) => (
+                    <Box
+                      key={tx.id}
+                      sx={{
+                        p: 1.5,
+                        borderBottom: `1px solid ${muiTheme.palette.divider}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 600 }}>
+                          {tx.transactionType}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          {new Date(tx.createdAt).toLocaleString()} | Ref: {tx.referenceNumber || tx.referenceId || 'N/A'}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ textAlign: 'right' }}>
+                        <Typography variant="body2" sx={{ color: '#10b981', fontWeight: 700 }}>
+                          +{Number(tx.amount || 0).toLocaleString()} ETB
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          {Number(tx.balanceBefore || 0).toLocaleString()} {'->'} {Number(tx.balanceAfter || 0).toLocaleString()}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Paper>
+          </>
+        )}
       </Paper>
 
       {/* Create/Edit Hotel Dialog */}

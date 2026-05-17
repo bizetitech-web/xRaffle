@@ -112,6 +112,51 @@ Default local URLs:
 
 Use the super admin email/password from Step 7 on the login page.
 
+## 10) Run Reports E2E Spec
+
+This validates the three reports pages end-to-end:
+
+- Global Overview
+- Branch Daily
+- Company Wallet Range
+
+### Required environment variables
+
+In the same terminal where you run Playwright, set:
+
+- `E2E_BASE_URL` (recommended: `http://localhost:5173`)
+- `E2E_API_BASE_URL` (recommended: `http://localhost:5000/api`)
+- `E2E_ADMIN_EMAIL`
+- `E2E_ADMIN_PASSWORD`
+
+PowerShell example:
+
+```powershell
+$env:E2E_BASE_URL='http://localhost:5173'
+$env:E2E_API_BASE_URL='http://localhost:5000/api'
+$env:E2E_ADMIN_EMAIL='admin@example.com'
+$env:E2E_ADMIN_PASSWORD='ChangeMe123!'
+```
+
+If needed, sync the admin account before running tests:
+
+```bash
+cd server
+npm run seed:super-admin -- --email admin@example.com --password ChangeMe123! --name "Super Admin"
+```
+
+### Run the dedicated reports E2E command
+
+From repo root:
+
+```bash
+npm --prefix client run e2e:reports
+```
+
+Expected result:
+
+- `3 passed` for `tests/e2e/06-reports-pages-flow.spec.js`
+
 ## Troubleshooting
 
 - If CORS fails, verify `CORS_ORIGINS` includes your client URL (for example `http://localhost:5173`).

@@ -12,7 +12,7 @@ export async function loginUi(page) {
   await page.getByLabel('Password').fill(creds.password);
   await page.getByRole('button', { name: 'Sign In' }).click();
 
-  await expect(page).toHaveURL(/\/admin\//);
+  await expect(page).toHaveURL(/\/(dashboard|admin(\/|$))/);
   return { skipped: false };
 }
 

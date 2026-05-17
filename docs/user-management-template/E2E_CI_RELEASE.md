@@ -19,6 +19,7 @@ Commands:
 ```bash
 npm --prefix client run e2e:install
 npm --prefix client run e2e
+npm --prefix client run e2e:reports
 ```
 
 Optional environment variables:
@@ -41,19 +42,22 @@ File:
 Jobs:
 
 1. build-and-test
-2. e2e-smoke (runs only when E2E secrets are configured)
+2. e2e-reports (runs only when E2E secrets are configured)
 
 build-and-test includes:
 
 - npm install
 - npm run check:links
 - npm --prefix client run build
-- npm --prefix server run test:integration
+- npm --prefix client run test:reports-date
 
-e2e-smoke includes:
+e2e-reports includes:
 
+- MySQL service bootstrap
+- server migration and seed setup (organization + super-admin)
+- startup of API (5000) and client app (5173)
 - npm --prefix client run e2e:install
-- npm --prefix client run e2e
+- npm --prefix client run e2e:reports
 
 ## Release Workflow
 

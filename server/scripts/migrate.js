@@ -10,15 +10,42 @@ const REQUIRED_TABLES = [
   'hotel_companies',
   'hotel_branches',
   'users',
+  'user_sessions',
   'roles',
   'permissions',
   'user_roles',
   'role_permissions',
   'audit_logs',
+  'wallet_accounts',
+  'wallet_transactions',
+  'wallet_topups',
+  'games',
+  'game_prizes',
+  'game_charges',
+  'cards',
+  'card_numbers',
+  'game_sales',
+  'draws',
+  'winners',
 ];
 
 const REQUIRED_ROLES = ['super_admin', 'org_admin', 'manager', 'viewer'];
-const REQUIRED_PERMISSIONS = ['MANAGE_USERS', 'MANAGE_ROLES', 'MANAGE_HOTELS', 'VIEW_AUDIT_LOGS'];
+const REQUIRED_PERMISSIONS = [
+  'MANAGE_USERS',
+  'MANAGE_ROLES',
+  'MANAGE_HOTELS',
+  'VIEW_AUDIT_LOGS',
+  'VIEW_WALLET',
+  'TOPUP_WALLET',
+  'MANAGE_GAMES',
+  'VIEW_GAMES',
+  'SELL_CARDS',
+  'RUN_DRAWS',
+  'VIEW_WINNERS',
+  'CLAIM_PRIZES',
+  'VIEW_REPORTS',
+  'VIEW_GLOBAL_REPORTS',
+];
 const REQUIRED_ROLE_IDS = [
   '79a386a5-207b-11f1-89b6-a4e078b831cc',
   '79a386a6-207b-11f1-89b6-a4e078b831cc',
@@ -30,6 +57,16 @@ const REQUIRED_PERMISSION_IDS = [
   '89a386a2-207b-11f1-89b6-a4e078b831cc',
   '89a386a3-207b-11f1-89b6-a4e078b831cc',
   '89a386a4-207b-11f1-89b6-a4e078b831cc',
+  '89a386a5-207b-11f1-89b6-a4e078b831cc',
+  '89a386a6-207b-11f1-89b6-a4e078b831cc',
+  '89a386a7-207b-11f1-89b6-a4e078b831cc',
+  '89a386a8-207b-11f1-89b6-a4e078b831cc',
+  '89a386a9-207b-11f1-89b6-a4e078b831cc',
+  '89a386aa-207b-11f1-89b6-a4e078b831cc',
+  '89a386ab-207b-11f1-89b6-a4e078b831cc',
+  '89a386ac-207b-11f1-89b6-a4e078b831cc',
+  '89a386ad-207b-11f1-89b6-a4e078b831cc',
+  '89a386ae-207b-11f1-89b6-a4e078b831cc',
 ];
 
 function normalizeRoleName(name) {
@@ -192,6 +229,24 @@ async function applyUsersBranchLink() {
   }
 }
 
+async function applyWalletAccountBackfill() {
+  const hasHotelCompanies = await tableExists('hotel_companies');
+  const hasWalletAccounts = await tableExists('wallet_accounts');
+
+  if (!hasHotelCompanies || !hasWalletAccounts) {
+    return;
+  }
+
+  console.log('🔁 Backfilling wallet_accounts for any company without a wallet');
+  await pool.query(
+    `INSERT INTO wallet_accounts (id, company_id, balance, currency, is_active, created_at, updated_at)
+     SELECT UUID(), hc.id, 0.00, 'ETB', 1, NOW(), NOW()
+     FROM hotel_companies hc
+     LEFT JOIN wallet_accounts wa ON wa.company_id = hc.id
+     WHERE wa.id IS NULL`
+  );
+}
+
 async function runSanityChecks() {
   const roleIdPlaceholders = REQUIRED_ROLE_IDS.map(() => '?').join(', ');
   const permissionIdPlaceholders = REQUIRED_PERMISSION_IDS.map(() => '?').join(', ');
@@ -286,6 +341,7 @@ async function runMigration() {
     }
 
     await runSanityChecks();
+    await applyWalletAccountBackfill();
     
     console.log('✅ Migration completed successfully!');
   } catch (error) {

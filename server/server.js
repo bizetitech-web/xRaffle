@@ -9,6 +9,9 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { logError, logInfo } from './utils/logger.js';
 // Import admin routes
 import adminRoutes from './routes/adminRoutes.js';
+import gameRoutes from './routes/gameRoutes.js';
+import winnerRoutes from './routes/winnerRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -72,6 +75,9 @@ testConnection();
 
 // Add admin routes
 app.use('/api/admin', adminRoutes);
+app.use('/api/games', gameRoutes);
+app.use('/api/winners', winnerRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

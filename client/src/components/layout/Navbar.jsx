@@ -9,6 +9,7 @@ import {
   Avatar,
   Menu,
   MenuItem,
+  Button,
   Divider,
   ListItemIcon,
   styled,
@@ -18,6 +19,7 @@ import {
 } from '@mui/material';
 import {
   Menu as MenuIcon,
+  Home as HomeIcon,
   Notifications as NotificationsIcon,
   Settings as SettingsIcon,
   Logout as LogoutIcon,
@@ -77,7 +79,6 @@ const Navbar = ({ toggleSidebar }) => {
   const { mode, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const isMobile = useMediaQuery('(max-width:480px)');
-  const isTablet = useMediaQuery('(max-width:768px)');
 
   const handleMenuOpen = (event) => {
     setAnchorEl(event.currentTarget);
@@ -125,8 +126,14 @@ const Navbar = ({ toggleSidebar }) => {
           <Typography
             variant="h6"
             noWrap
-            component="div"
+            component="button"
+            onClick={() => navigate('/dashboard')}
             sx={{ 
+              border: 'none',
+              cursor: 'pointer',
+              backgroundColor: 'transparent',
+              p: 0,
+              textAlign: 'left',
               display: { xs: 'none', sm: 'block' },
               fontWeight: 700,
               background: 'linear-gradient(45deg, #1E6DEB 30%, #FF8A00 90%)',
@@ -136,6 +143,14 @@ const Navbar = ({ toggleSidebar }) => {
           >
             xRaffle
           </Typography>
+          <Button
+            color="inherit"
+            startIcon={<HomeIcon />}
+            onClick={() => navigate('/dashboard')}
+            sx={{ ml: 1, display: { xs: 'none', sm: 'inline-flex' } }}
+          >
+            Dashboard
+          </Button>
         </Box>
 
         {/* Right section */}
