@@ -4,6 +4,8 @@ import pool from '../../../config/database.js';
 import { gameSessionRepository } from './gameSession.repository.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import { ensureBranchScope } from '../../core/policy/scopePolicy.js';
+import { realtimeGateway } from '../realtime/realtime.gateway.js';
+import { RealtimeEventContracts } from '../realtime/realtime.events.js';
 
 const generateSessionCode = () => {
   const stamp = Date.now().toString().slice(-8);
@@ -39,6 +41,33 @@ const assertAllowedStatus = (status, allowedStatuses, actionName) => {
       }
     );
   }
+};
+
+const emitSessionLifecycleEvent = ({
+  event,
+  action,
+  sessionId,
+  sessionCode,
+  companyId,
+  status,
+  version,
+  actorUserId,
+  summary,
+}) => {
+  realtimeGateway.emitSessionEvent({
+    event,
+    sessionId,
+    companyId,
+    payload: {
+      action,
+      sessionId,
+      sessionCode,
+      status,
+      version,
+      actorUserId,
+      ...(summary ? { summary } : {}),
+    },
+  });
 };
 
 export class GameSessionService {
@@ -144,6 +173,17 @@ export class GameSessionService {
         { setStartedAt: true }
       );
 
+      emitSessionLifecycleEvent({
+        event: RealtimeEventContracts.session.statusChanged,
+        action: 'start',
+        sessionId: updated.id,
+        sessionCode: updated.sessionCode,
+        companyId: session.companyId,
+        status: updated.status,
+        version: updated.version,
+        actorUserId: req.user.sub,
+      });
+
       return {
         sessionId: updated.id,
         status: updated.status,
@@ -170,6 +210,17 @@ export class GameSessionService {
         'ACTIVE',
         req.body.expectedVersion
       );
+
+      emitSessionLifecycleEvent({
+        event: RealtimeEventContracts.session.statusChanged,
+        action: 'pause',
+        sessionId: updated.id,
+        sessionCode: updated.sessionCode,
+        companyId: session.companyId,
+        status: updated.status,
+        version: updated.version,
+        actorUserId: req.user.sub,
+      });
 
       return {
         sessionId: updated.id,
@@ -198,6 +249,17 @@ export class GameSessionService {
         req.body.expectedVersion
       );
 
+      emitSessionLifecycleEvent({
+        event: RealtimeEventContracts.session.statusChanged,
+        action: 'resume',
+        sessionId: updated.id,
+        sessionCode: updated.sessionCode,
+        companyId: session.companyId,
+        status: updated.status,
+        version: updated.version,
+        actorUserId: req.user.sub,
+      });
+
       return {
         sessionId: updated.id,
         status: updated.status,
@@ -225,6 +287,17 @@ export class GameSessionService {
         req.body.expectedVersion,
         { setEndedAt: true }
       );
+
+      emitSessionLifecycleEvent({
+        event: RealtimeEventContracts.session.statusChanged,
+        action: 'end',
+        sessionId: updated.id,
+        sessionCode: updated.sessionCode,
+        companyId: session.companyId,
+        status: updated.status,
+        version: updated.version,
+        actorUserId: req.user.sub,
+      });
 
       return {
         sessionId: updated.id,
@@ -256,6 +329,17 @@ export class GameSessionService {
         { clearStartedAt: true, clearEndedAt: true }
       );
 
+      emitSessionLifecycleEvent({
+        event: RealtimeEventContracts.session.reset,
+        action: 'reset',
+        sessionId: updated.id,
+        sessionCode: updated.sessionCode,
+        companyId: session.companyId,
+        status: updated.status,
+        version: updated.version,
+        actorUserId: req.user.sub,
+      });
+
       return {
         sessionId: updated.id,
         status: updated.status,
@@ -276,7 +360,21 @@ export class GameSessionService {
       assertExpectedVersion(req.body.expectedVersion, session.version);
       assertAllowedStatus(session.status, ['ACTIVE', 'DRAWING'], 'complete');
 
-      return gameSessionRepository.complete(connection, session.id, req.body.expectedVersion);
+      const completed = await gameSessionRepository.complete(connection, session.id, req.body.expectedVersion);
+
+      emitSessionLifecycleEvent({
+        event: RealtimeEventContracts.session.statusChanged,
+        action: 'complete',
+        sessionId: completed.sessionId,
+        sessionCode: session.sessionCode,
+        companyId: session.companyId,
+        status: completed.status,
+        version: completed.version,
+        actorUserId: req.user.sub,
+        summary: completed.summary,
+      });
+
+      return completed;
     });
   }
 }

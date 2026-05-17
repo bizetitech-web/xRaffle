@@ -32,6 +32,40 @@ test('realtime gateway emit methods return false when io is unattached', () => {
   );
 });
 
+test('realtime gateway emits envelope to session and company rooms', () => {
+  const gateway = createRealtimeGateway();
+  const emitted = [];
+
+  gateway.io = {
+    to: (room) => ({
+      emit: (event, envelope) => {
+        emitted.push({ room, event, envelope });
+      },
+    }),
+  };
+
+  const ok = gateway.emitSessionEvent({
+    event: RealtimeEventContracts.session.statusChanged,
+    sessionId: 'session-1',
+    companyId: 'co-1',
+    payload: {
+      action: 'start',
+      status: 'ACTIVE',
+      version: 4,
+    },
+  });
+
+  assert.equal(ok, true);
+  assert.equal(emitted.length, 2);
+  assert.equal(emitted[0].room, 'session:session-1');
+  assert.equal(emitted[1].room, 'company:co-1');
+  assert.equal(emitted[0].event, RealtimeEventContracts.session.statusChanged);
+  assert.equal(emitted[0].envelope.payload.action, 'start');
+  assert.equal(emitted[0].envelope.meta.sessionId, 'session-1');
+  assert.equal(emitted[0].envelope.meta.companyId, 'co-1');
+  assert.match(emitted[0].envelope.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
 test('realtime auth resolves bearer token from handshake auth block', () => {
   const token = 'abc123';
   const socket = {

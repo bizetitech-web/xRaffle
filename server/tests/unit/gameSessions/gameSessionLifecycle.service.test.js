@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import pool from '../../../config/database.js';
 import { gameSessionService } from '../../../src/contexts/gameSessions/gameSession.service.js';
 import { gameSessionRepository } from '../../../src/contexts/gameSessions/gameSession.repository.js';
+import { realtimeGateway } from '../../../src/contexts/realtime/realtime.gateway.js';
+import { RealtimeEventContracts } from '../../../src/contexts/realtime/realtime.events.js';
 
 const makeReq = ({
   sessionId = '11111111-1111-1111-1111-111111111111',
@@ -181,32 +183,49 @@ test('createSession enforces company scope', async () => {
 });
 
 test('startSession transitions PENDING to ACTIVE', async () => {
-  await withMockedTransaction(async ({ setFindById, setUpdateStatus, calls }) => {
-    setFindById(async () => ({
-      id: 'session-1',
-      companyId: 'co-1',
-      status: 'PENDING',
-      version: 5,
-    }));
+  const originalEmitSessionEvent = realtimeGateway.emitSessionEvent;
+  const realtimeEvents = [];
+  realtimeGateway.emitSessionEvent = (payload) => {
+    realtimeEvents.push(payload);
+    return true;
+  };
 
-    setUpdateStatus(async () => ({
-      id: 'session-1',
-      status: 'ACTIVE',
-      version: 6,
-    }));
+  try {
+    await withMockedTransaction(async ({ setFindById, setUpdateStatus, calls }) => {
+      setFindById(async () => ({
+        id: 'session-1',
+        companyId: 'co-1',
+        status: 'PENDING',
+        version: 5,
+      }));
 
-    const result = await gameSessionService.startSession(makeReq({ expectedVersion: 5 }));
+      setUpdateStatus(async () => ({
+        id: 'session-1',
+        status: 'ACTIVE',
+        version: 6,
+      }));
 
-    assert.deepEqual(result, {
-      sessionId: 'session-1',
-      status: 'ACTIVE',
-      version: 6,
+      const result = await gameSessionService.startSession(makeReq({ expectedVersion: 5 }));
+
+      assert.deepEqual(result, {
+        sessionId: 'session-1',
+        status: 'ACTIVE',
+        version: 6,
+      });
+
+      assert.equal(calls.updateStatus.length, 1);
+      assert.equal(calls.updateStatus[0][2], 'ACTIVE');
+      assert.deepEqual(calls.updateStatus[0][4], { setStartedAt: true });
+      assert.equal(realtimeEvents.length, 1);
+      assert.equal(realtimeEvents[0].event, RealtimeEventContracts.session.statusChanged);
+      assert.equal(realtimeEvents[0].sessionId, 'session-1');
+      assert.equal(realtimeEvents[0].companyId, 'co-1');
+      assert.equal(realtimeEvents[0].payload.action, 'start');
+      assert.equal(realtimeEvents[0].payload.status, 'ACTIVE');
     });
-
-    assert.equal(calls.updateStatus.length, 1);
-    assert.equal(calls.updateStatus[0][2], 'ACTIVE');
-    assert.deepEqual(calls.updateStatus[0][4], { setStartedAt: true });
-  });
+  } finally {
+    realtimeGateway.emitSessionEvent = originalEmitSessionEvent;
+  }
 });
 
 test('startSession rejects stale expectedVersion', async () => {
@@ -276,69 +295,103 @@ test('endSession enforces company scope for non-super-admin', async () => {
 });
 
 test('resetSession clears runtime data and returns PENDING', async () => {
-  await withMockedTransaction(async ({ setFindById, setResetRuntime, setUpdateStatus, calls }) => {
-    setFindById(async () => ({
-      id: 'session-1',
-      companyId: 'co-1',
-      status: 'DRAWING',
-      version: 11,
-    }));
+  const originalEmitSessionEvent = realtimeGateway.emitSessionEvent;
+  const realtimeEvents = [];
+  realtimeGateway.emitSessionEvent = (payload) => {
+    realtimeEvents.push(payload);
+    return true;
+  };
 
-    setResetRuntime(async () => {});
-    setUpdateStatus(async () => ({
-      id: 'session-1',
-      status: 'PENDING',
-      version: 12,
-    }));
+  try {
+    await withMockedTransaction(async ({ setFindById, setResetRuntime, setUpdateStatus, calls }) => {
+      setFindById(async () => ({
+        id: 'session-1',
+        companyId: 'co-1',
+        status: 'DRAWING',
+        version: 11,
+      }));
 
-    const result = await gameSessionService.resetSession(makeReq({ expectedVersion: 11 }));
+      setResetRuntime(async () => {});
+      setUpdateStatus(async () => ({
+        id: 'session-1',
+        status: 'PENDING',
+        version: 12,
+      }));
 
-    assert.equal(calls.resetRuntime, 1);
-    assert.equal(calls.updateStatus[0][2], 'PENDING');
-    assert.deepEqual(calls.updateStatus[0][4], { clearStartedAt: true, clearEndedAt: true });
-    assert.deepEqual(result, {
-      sessionId: 'session-1',
-      status: 'PENDING',
-      version: 12,
+      const result = await gameSessionService.resetSession(makeReq({ expectedVersion: 11 }));
+
+      assert.equal(calls.resetRuntime, 1);
+      assert.equal(calls.updateStatus[0][2], 'PENDING');
+      assert.deepEqual(calls.updateStatus[0][4], { clearStartedAt: true, clearEndedAt: true });
+      assert.deepEqual(result, {
+        sessionId: 'session-1',
+        status: 'PENDING',
+        version: 12,
+      });
+      assert.equal(realtimeEvents.length, 1);
+      assert.equal(realtimeEvents[0].event, RealtimeEventContracts.session.reset);
+      assert.equal(realtimeEvents[0].payload.action, 'reset');
     });
-  });
+  } finally {
+    realtimeGateway.emitSessionEvent = originalEmitSessionEvent;
+  }
 });
 
 test('completeSession returns repository summary payload', async () => {
-  await withMockedTransaction(async ({ setFindById, setComplete, calls }) => {
-    setFindById(async () => ({
-      id: 'session-1',
-      companyId: 'co-1',
-      status: 'DRAWING',
-      version: 7,
-    }));
+  const originalEmitSessionEvent = realtimeGateway.emitSessionEvent;
+  const realtimeEvents = [];
+  realtimeGateway.emitSessionEvent = (payload) => {
+    realtimeEvents.push(payload);
+    return true;
+  };
 
-    setComplete(async () => ({
-      sessionId: 'session-1',
-      status: 'COMPLETED',
-      version: 8,
-      summary: {
+  try {
+    await withMockedTransaction(async ({ setFindById, setComplete, calls }) => {
+      setFindById(async () => ({
+        id: 'session-1',
+        companyId: 'co-1',
+        status: 'DRAWING',
+        version: 7,
+      }));
+
+      setComplete(async () => ({
+        sessionId: 'session-1',
+        status: 'COMPLETED',
+        version: 8,
+        summary: {
+          drawCount: 12,
+          winnersCount: 4,
+          claimsCount: 3,
+          revenue: 2500,
+        },
+      }));
+
+      const result = await gameSessionService.completeSession(makeReq({ expectedVersion: 7 }));
+
+      assert.equal(calls.complete.length, 1);
+      assert.equal(calls.complete[0][1], 'session-1');
+      assert.deepEqual(result, {
+        sessionId: 'session-1',
+        status: 'COMPLETED',
+        version: 8,
+        summary: {
+          drawCount: 12,
+          winnersCount: 4,
+          claimsCount: 3,
+          revenue: 2500,
+        },
+      });
+      assert.equal(realtimeEvents.length, 1);
+      assert.equal(realtimeEvents[0].event, RealtimeEventContracts.session.statusChanged);
+      assert.equal(realtimeEvents[0].payload.action, 'complete');
+      assert.deepEqual(realtimeEvents[0].payload.summary, {
         drawCount: 12,
         winnersCount: 4,
         claimsCount: 3,
         revenue: 2500,
-      },
-    }));
-
-    const result = await gameSessionService.completeSession(makeReq({ expectedVersion: 7 }));
-
-    assert.equal(calls.complete.length, 1);
-    assert.equal(calls.complete[0][1], 'session-1');
-    assert.deepEqual(result, {
-      sessionId: 'session-1',
-      status: 'COMPLETED',
-      version: 8,
-      summary: {
-        drawCount: 12,
-        winnersCount: 4,
-        claimsCount: 3,
-        revenue: 2500,
-      },
+      });
     });
-  });
+  } finally {
+    realtimeGateway.emitSessionEvent = originalEmitSessionEvent;
+  }
 });
