@@ -1,6 +1,9 @@
 import { logError } from '../utils/logger.js';
 
 export const errorHandler = (err, req, res, next) => {
+  const status = err?.status || 500;
+  const code = err?.code;
+
   logError('Unhandled API error', {
     error: err,
     request: {
@@ -10,5 +13,17 @@ export const errorHandler = (err, req, res, next) => {
       userId: req.user?.sub,
     },
   });
-  res.status(err.status || 500).json({ error: err.message || 'Server error' });
+  const payload = {
+    error: err?.message || 'Server error',
+  };
+
+  if (code) {
+    payload.code = code;
+  }
+
+  if (err?.details) {
+    payload.details = err.details;
+  }
+
+  res.status(status).json(payload);
 };

@@ -76,7 +76,14 @@ From server folder:
 npm run seed:super-admin -- --email admin@example.com --password ChangeMe123! --name "Super Admin"
 npm run verify:db
 npm run test:integration
+npm run test:integration:contracts
 ```
+
+DB-backed integration contracts lane requires:
+
+- TEST_ADMIN_EMAIL
+- TEST_ADMIN_PASSWORD
+- TEST_BASE_URL (defaults to http://localhost:5000/api)
 
 From client folder:
 

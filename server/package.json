@@ -11,7 +11,9 @@
     "seed:org": "node scripts/createOrganization.js",
     "seed:super-admin": "node scripts/createSuperAdmin.js",
     "reset:password": "node scripts/updateUserPassword.js",
-    "test:integration": "node --test tests/integration/**/*.test.js"
+    "test:integration": "node --test tests/integration/**/*.test.js",
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "test:integration:contracts": "node --test tests/integration/2[4-9]-*.test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

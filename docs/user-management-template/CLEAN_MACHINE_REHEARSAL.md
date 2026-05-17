@@ -46,6 +46,39 @@ npm --prefix client run e2e:install
 npm --prefix client run e2e
 ```
 
+## Contracts Lane Rehearsal Checklist
+
+Purpose:
+
+- Validate DB-backed integration contract lane prerequisites and expected skip/run behavior.
+
+Prerequisites:
+
+- server/.env is configured with DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET, CORS_ORIGINS.
+- API is reachable at TEST_BASE_URL (default: http://localhost:5000/api).
+- TEST_ADMIN_EMAIL and TEST_ADMIN_PASSWORD are configured for run mode.
+
+Run from repository root:
+
+```bash
+npm run test:integration:contracts
+```
+
+Expected outcomes:
+
+- If TEST_ADMIN_EMAIL or TEST_ADMIN_PASSWORD is missing:
+	- Contract tests are discovered and skipped.
+	- Command exits successfully (skip-by-design).
+- If credentials are present and DB is ready:
+	- Contract tests execute against live DB and API.
+	- Command exits with non-zero only on real failures.
+
+Quick checks when run mode is expected:
+
+- Verify DB migration has been applied: npm run migrate.
+- Verify seeded admin exists for TEST_ADMIN_EMAIL.
+- Verify API health endpoint responds: GET /api/health.
+
 ## Pass Criteria
 
 - Install finishes without dependency conflicts.

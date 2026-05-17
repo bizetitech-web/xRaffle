@@ -7,6 +7,7 @@
     "migrate": "node server/scripts/migrate.js",
     "verify:db": "npm --prefix server run verify:db",
     "test:integration": "npm --prefix server run test:integration",
+    "test:integration:contracts": "npm --prefix server run test:integration:contracts",
     "test:e2e": "npm --prefix client run e2e",
     "check:links": "node scripts/check-doc-links.mjs",
     "ci:quick": "npm run check:links && npm --prefix client run build && npm run test:integration",

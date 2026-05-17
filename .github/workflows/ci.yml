@@ -5,6 +5,12 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_contracts:
+        description: Run DB integration contract lane
+        required: false
+        default: 'false'
 
 jobs:
   build-and-test:
@@ -172,3 +178,153 @@ jobs:
         if: steps.e2e_gate.outputs.should_run != 'true'
         run: |
           echo "Skipping reports E2E: E2E_ADMIN_EMAIL and/or E2E_ADMIN_PASSWORD are not configured."
+
+  integration-contracts:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    continue-on-error: ${{ vars.CI_CONTRACTS_BLOCKING != 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_contracts == 'true') || vars.CI_RUN_DB_CONTRACTS == 'true' }}
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: xraffle
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: xraffle
+      JWT_SECRET: ci-secret-change-me
+      CORS_ORIGINS: http://localhost:5173
+
+    steps:
+      - name: Determine contract secret availability
+        id: contracts_gate
+        shell: bash
+        env:
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: |
+          if [[ -n "${E2E_ADMIN_EMAIL}" && -n "${E2E_ADMIN_PASSWORD}" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Contract lane credentials are configured."
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Contract lane credentials are missing; run will be skipped."
+          fi
+
+      - name: Checkout
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        run: npm install
+
+      - name: Prepare server .env
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        run: |
+          cp server/.env.example server/.env
+          {
+            echo "DB_HOST=${DB_HOST}"
+            echo "DB_USER=${DB_USER}"
+            echo "DB_PASSWORD=${DB_PASSWORD}"
+            echo "DB_NAME=${DB_NAME}"
+            echo "JWT_SECRET=${JWT_SECRET}"
+            echo "CORS_ORIGINS=${CORS_ORIGINS}"
+          } >> server/.env
+
+      - name: Wait for MySQL
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        run: |
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -uroot -proot --silent; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time"
+          exit 1
+
+      - name: Run DB migration
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        run: npm run migrate
+
+      - name: Seed organization and super-admin
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        env:
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: |
+          npm --prefix server run seed:org -- --name "CI Organization" --code ci-org --email ci-org@example.com
+          npm --prefix server run seed:super-admin -- --email "${E2E_ADMIN_EMAIL}" --password "${E2E_ADMIN_PASSWORD}" --name "CI Super Admin"
+
+      - name: Start API server
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        run: npm --prefix server run start &
+
+      - name: Wait for API readiness
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:5000/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become ready in time"
+          exit 1
+
+      - name: Run DB integration contracts lane
+        if: steps.contracts_gate.outputs.should_run == 'true'
+        env:
+          TEST_BASE_URL: http://localhost:5000/api
+          TEST_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          TEST_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: |
+          npm --prefix server run test:integration:contracts 2>&1 | tee integration-contracts.log
+
+      - name: Upload integration contracts log
+        if: always() && steps.contracts_gate.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-contracts-log
+          path: integration-contracts.log
+          if-no-files-found: warn
+
+      - name: Publish integration contracts summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Integration Contracts Lane"
+            echo
+            if [[ "${{ steps.contracts_gate.outputs.should_run }}" == "true" ]]; then
+              echo "- Triggered: yes"
+              echo "- Command: npm --prefix server run test:integration:contracts"
+              echo "- Log artifact: integration-contracts-log"
+            else
+              echo "- Triggered: no"
+              echo "- Reason: missing E2E_ADMIN_EMAIL and/or E2E_ADMIN_PASSWORD"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Skip DB integration contracts lane (missing secrets)
+        if: steps.contracts_gate.outputs.should_run != 'true'
+        run: |
+          echo "Skipping DB integration contracts lane: E2E_ADMIN_EMAIL and/or E2E_ADMIN_PASSWORD are not configured."

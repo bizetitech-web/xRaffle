@@ -19,6 +19,8 @@ const REQUIRED_TABLES = [
   'wallet_accounts',
   'wallet_transactions',
   'wallet_topups',
+  'game_templates',
+  'game_template_prizes',
   'games',
   'game_prizes',
   'game_charges',

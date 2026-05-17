@@ -12,6 +12,7 @@ import adminRoutes from './routes/adminRoutes.js';
 import gameRoutes from './routes/gameRoutes.js';
 import winnerRoutes from './routes/winnerRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
+import phase1ContextRouter from './src/contexts/index.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -74,10 +75,12 @@ app.use(express.static(join(__dirname, '../client')));
 testConnection();
 
 // Add admin routes
+app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/games', gameRoutes);
 app.use('/api/winners', winnerRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api', phase1ContextRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -128,9 +131,6 @@ app.get('/api/db-status', async (req, res) => {
     });
   }
 });
-
-// Auth routes
-app.use('/api/auth', authRoutes);
 
 // ✅ IMPORTANT: This catch-all route MUST come AFTER all API routes
 // It handles client-side routing by serving index.html for any non-API routes

@@ -43,6 +43,7 @@ Jobs:
 
 1. build-and-test
 2. e2e-reports (runs only when E2E secrets are configured)
+3. integration-contracts (opt-in, non-blocking DB contract/context lane)
 
 build-and-test includes:
 
@@ -58,6 +59,61 @@ e2e-reports includes:
 - startup of API (5000) and client app (5173)
 - npm --prefix client run e2e:install
 - npm --prefix client run e2e:reports
+
+### Integration Contracts Lane Runbook
+
+Purpose:
+
+- Run the DB-backed integration contract slice for context endpoints and runtime schema guards.
+
+Tests included (server):
+
+- tests/integration/24-context-playground-db-flow.test.js
+- tests/integration/25-context-board-db-flow.test.js
+- tests/integration/26-schema-contract-runtime.test.js
+- tests/integration/27-context-session-lifecycle-db-flow.test.js
+- tests/integration/28-context-session-lifecycle-negative-db-flow.test.js
+- tests/integration/29-schema-contract-constraints.test.js
+
+Command:
+
+```bash
+npm --prefix server run test:integration:contracts
+```
+
+Triggering in CI:
+
+- Manual: workflow_dispatch with input run_contracts=true.
+- Variable-gated: repository variable CI_RUN_DB_CONTRACTS=true.
+
+Blocking mode toggle:
+
+- CI_CONTRACTS_BLOCKING=true makes the integration-contracts job blocking (continue-on-error disabled).
+- Any other value (or unset) keeps the lane informational (continue-on-error enabled).
+
+Required secrets:
+
+- E2E_ADMIN_EMAIL
+- E2E_ADMIN_PASSWORD
+
+Required environment/bootstrap (handled by ci.yml job):
+
+- MySQL service (8.x)
+- DB migration
+- seed organization + seed super-admin
+- API server startup and readiness probe
+
+Expected skip behavior:
+
+- If E2E_ADMIN_EMAIL or E2E_ADMIN_PASSWORD is missing, the integration-contracts job logs a skip message and exits cleanly.
+- On local runs without TEST_ADMIN_EMAIL/TEST_ADMIN_PASSWORD, tests are discovered and skipped by design.
+
+Promotion path (informational to blocking):
+
+1. Keep continue-on-error enabled while collecting 1-2 weeks of signal.
+2. Track flakes/failures and resolve deterministic data/setup issues.
+3. Remove continue-on-error in ci.yml after stability is demonstrated.
+4. Set CI_CONTRACTS_BLOCKING=true and CI_RUN_DB_CONTRACTS=true for protected branches when ready to enforce continuously.
 
 ## Release Workflow
 
