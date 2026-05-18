@@ -18,12 +18,40 @@ const REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS = parsePositiveInt(process.env.REAL
 const REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS, 60_000);
 const REALTIME_TOKEN_IDEMPOTENCY_TTL_MS = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_TTL_MS, 15_000);
 const REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH, 128);
+const REALTIME_TOKEN_STATE_CLEANUP_INTERVAL = parsePositiveInt(process.env.REALTIME_TOKEN_STATE_CLEANUP_INTERVAL, 50);
+
+let realtimeTokenStateOperationCount = 0;
+
+function cleanupRealtimeTokenState(now = Date.now()) {
+  for (const [userId, bucket] of realtimeTokenBuckets.entries()) {
+    if (now - bucket.windowStart >= REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS) {
+      realtimeTokenBuckets.delete(userId);
+    }
+  }
+
+  for (const [cacheKey, entry] of realtimeTokenIdempotencyCache.entries()) {
+    if (now >= entry.expiresAt) {
+      realtimeTokenIdempotencyCache.delete(cacheKey);
+    }
+  }
+}
+
+function maybeCleanupRealtimeTokenState(now = Date.now()) {
+  realtimeTokenStateOperationCount += 1;
+  if (realtimeTokenStateOperationCount % REALTIME_TOKEN_STATE_CLEANUP_INTERVAL !== 0) {
+    return;
+  }
+
+  cleanupRealtimeTokenState(now);
+}
 
 function buildIdempotencyCacheKey(userId, idempotencyKey) {
   return `${userId}:${idempotencyKey}`;
 }
 
 function readRealtimeTokenResponseFromCache(userId, idempotencyKey) {
+  maybeCleanupRealtimeTokenState();
+
   const cacheKey = buildIdempotencyCacheKey(userId, idempotencyKey);
   const existing = realtimeTokenIdempotencyCache.get(cacheKey);
 
@@ -41,6 +69,8 @@ function readRealtimeTokenResponseFromCache(userId, idempotencyKey) {
 }
 
 function cacheRealtimeTokenResponseForKey(userId, idempotencyKey, payload) {
+  maybeCleanupRealtimeTokenState();
+
   const cacheKey = buildIdempotencyCacheKey(userId, idempotencyKey);
   realtimeTokenIdempotencyCache.set(cacheKey, {
     expiresAt: Date.now() + REALTIME_TOKEN_IDEMPOTENCY_TTL_MS,
@@ -50,6 +80,8 @@ function cacheRealtimeTokenResponseForKey(userId, idempotencyKey, payload) {
 
 function consumeRealtimeTokenSlot(userId) {
   const now = Date.now();
+  maybeCleanupRealtimeTokenState(now);
+
   const existing = realtimeTokenBuckets.get(userId);
 
   if (!existing || now - existing.windowStart >= REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS) {
@@ -172,10 +204,18 @@ export const realtimeRoutesTesting = {
   resetRealtimeTokenRateLimitState() {
     realtimeTokenBuckets.clear();
     realtimeTokenIdempotencyCache.clear();
+    realtimeTokenStateOperationCount = 0;
   },
   consumeRealtimeTokenSlot,
   cacheRealtimeTokenResponseForKey,
   readRealtimeTokenResponseFromCache,
+  cleanupRealtimeTokenState,
+  getStateSizeSnapshot() {
+    return {
+      buckets: realtimeTokenBuckets.size,
+      idempotencyEntries: realtimeTokenIdempotencyCache.size,
+    };
+  },
 };
 
 export default router;
