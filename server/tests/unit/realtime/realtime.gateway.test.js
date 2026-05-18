@@ -132,3 +132,22 @@ test('realtime auth decodes valid JWT payload', () => {
   assert.equal(decoded.sub, 'user-1');
   assert.equal(decoded.hotelCompanyId, 'co-1');
 });
+
+test('realtime token issuer creates decodable socket token with expected claims', () => {
+  const token = realtimeGatewayTesting.issueRealtimeToken(
+    {
+      sub: 'user-2',
+      email: 'token@example.com',
+      role: 'org_admin',
+      roleLevel: 2,
+      hotelCompanyId: 'co-2',
+    },
+    { expiresInSeconds: 300 }
+  );
+
+  const decoded = realtimeGatewayTesting.decodeRealtimeToken(token);
+  assert.equal(decoded.sub, 'user-2');
+  assert.equal(decoded.role, 'org_admin');
+  assert.equal(decoded.roleLevel, 2);
+  assert.equal(decoded.hotelCompanyId, 'co-2');
+});

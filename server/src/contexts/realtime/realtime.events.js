@@ -20,6 +20,7 @@ export const RealtimeEventContracts = Object.freeze({
     next: 'draw:next',
   }),
   winner: Object.freeze({
+    created: 'winner:created',
     claimed: 'winner:claimed',
   }),
 });

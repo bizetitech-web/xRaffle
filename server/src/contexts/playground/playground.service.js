@@ -3,6 +3,8 @@ import { ErrorCodes } from '../../core/errors/errorCodes.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import pool from '../../../config/database.js';
 import { playgroundRepository } from './playground.repository.js';
+import { realtimeGateway } from '../realtime/realtime.gateway.js';
+import { RealtimeEventContracts } from '../realtime/realtime.events.js';
 
 const assertScope = (req, context) => {
   const isSuperAdmin = req.user?.role_level === 1;
@@ -16,6 +18,41 @@ const assertVersion = (expectedVersion, currentVersion) => {
     throw AppError.conflict('Session version mismatch', ErrorCodes.VERSION_CONFLICT, {
       expectedVersion: Number(expectedVersion),
       currentVersion: Number(currentVersion),
+    });
+  }
+};
+
+const emitDrawAndWinnerEvents = ({ draw, sessionId, companyId }) => {
+  realtimeGateway.emitDrawEvent({
+    event: RealtimeEventContracts.draw.next,
+    sessionId,
+    companyId,
+    payload: {
+      drawId: draw.drawId,
+      drawPosition: draw.drawPosition,
+      calledNumber: draw.calledNumber,
+      beerQuantity: draw.beerQuantity,
+      winnerCount: Array.isArray(draw.winners) ? draw.winners.length : 0,
+      winners: draw.winners || [],
+      version: draw.version,
+    },
+  });
+
+  for (const winner of draw.winners || []) {
+    realtimeGateway.emitWinnerEvent({
+      event: RealtimeEventContracts.winner.created,
+      sessionId,
+      companyId,
+      payload: {
+        drawId: draw.drawId,
+        drawPosition: draw.drawPosition,
+        calledNumber: draw.calledNumber,
+        winnerId: winner.winnerId,
+        cardId: winner.cardId,
+        cardNumber: winner.cardNumber,
+        beerQuantity: draw.beerQuantity,
+        version: draw.version,
+      },
     });
   }
 };
@@ -94,10 +131,18 @@ export class PlaygroundService {
       });
 
       const refreshed = await playgroundRepository.findSession(connection, req.params.sessionId);
-      return {
+      const result = {
         ...drawn,
         version: refreshed.version,
       };
+
+      emitDrawAndWinnerEvents({
+        draw: result,
+        sessionId: req.params.sessionId,
+        companyId: session.companyId,
+      });
+
+      return result;
     });
   }
 
@@ -174,9 +219,24 @@ export class PlaygroundService {
         throw AppError.conflict('Winner already claimed', ErrorCodes.WINNER_ALREADY_CLAIMED);
       }
 
-      return playgroundRepository.claimWinner(connection, req.params.winnerId, {
+      const result = await playgroundRepository.claimWinner(connection, req.params.winnerId, {
         claimedBy: req.user.sub,
       });
+
+      realtimeGateway.emitWinnerEvent({
+        event: RealtimeEventContracts.winner.claimed,
+        sessionId: winner.sessionId,
+        companyId: winner.companyId,
+        payload: {
+          winnerId: result.winnerId,
+          sessionId: result.sessionId,
+          claimed: result.claimed,
+          claimedAt: result.claimedAt,
+          version: result.version,
+        },
+      });
+
+      return result;
     });
   }
 }
