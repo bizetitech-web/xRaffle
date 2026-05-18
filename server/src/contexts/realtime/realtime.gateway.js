@@ -50,6 +50,10 @@ const decodeRealtimeToken = (token) => {
   }
 
   const decoded = jwt.verify(token, JWT_SECRET);
+  if (decoded.tokenType !== 'realtime') {
+    throw new Error('Invalid realtime token');
+  }
+
   return {
     sub: decoded.sub,
     email: decoded.email,

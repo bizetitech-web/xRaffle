@@ -122,6 +122,7 @@ test('realtime auth decodes valid JWT payload', () => {
       role: 'org_admin',
       roleLevel: 2,
       hotelCompanyId: 'co-1',
+      tokenType: 'realtime',
     },
     JWT_SECRET,
     { expiresIn: '5m' }
@@ -131,6 +132,23 @@ test('realtime auth decodes valid JWT payload', () => {
 
   assert.equal(decoded.sub, 'user-1');
   assert.equal(decoded.hotelCompanyId, 'co-1');
+});
+
+test('realtime auth rejects non-realtime JWT token type', () => {
+  const signed = jwt.sign(
+    {
+      sub: 'user-1',
+      email: 'u@example.com',
+      role: 'org_admin',
+      roleLevel: 2,
+      hotelCompanyId: 'co-1',
+      tokenType: 'access',
+    },
+    JWT_SECRET,
+    { expiresIn: '5m' }
+  );
+
+  assert.throws(() => realtimeGatewayTesting.decodeRealtimeToken(signed), /Invalid realtime token/);
 });
 
 test('realtime token issuer creates decodable socket token with expected claims', () => {
