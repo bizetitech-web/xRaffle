@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import pool from '../../../config/database.js';
 import { playgroundService } from '../../../src/contexts/playground/playground.service.js';
 import { playgroundRepository } from '../../../src/contexts/playground/playground.repository.js';
+import { realtimeGateway } from '../../../src/contexts/realtime/realtime.gateway.js';
+import { RealtimeEventContracts } from '../../../src/contexts/realtime/realtime.events.js';
 
 const makeReq = ({
   sessionId = '11111111-1111-1111-1111-111111111111',
@@ -207,5 +209,111 @@ test('claimWinner returns claimed payload on success', async () => {
       claimedAt: '2026-01-01T12:00:00.000Z',
       version: 11,
     });
+  });
+});
+
+test('drawNext emits draw and winner-created realtime events on success', async () => {
+  await withMockedPlayground(async () => {
+    const originalEmitDrawEvent = realtimeGateway.emitDrawEvent;
+    const originalEmitWinnerEvent = realtimeGateway.emitWinnerEvent;
+    const drawEvents = [];
+    const winnerEvents = [];
+
+    realtimeGateway.emitDrawEvent = (payload) => {
+      drawEvents.push(payload);
+      return true;
+    };
+    realtimeGateway.emitWinnerEvent = (payload) => {
+      winnerEvents.push(payload);
+      return true;
+    };
+
+    playgroundRepository.findSession = async () => ({
+      id: 'session-1',
+      companyId: 'co-1',
+      status: 'DRAWING',
+      totalNumbersPool: 75,
+      version: 5,
+    });
+    playgroundRepository.getDrawRows = async () => [];
+    playgroundRepository.getNextPrize = async () => ({ drawPosition: 1, beerQuantity: 2 });
+    playgroundRepository.drawNext = async () => ({
+      drawId: 'draw-1',
+      drawPosition: 1,
+      calledNumber: 19,
+      beerQuantity: 2,
+      winners: [
+        {
+          winnerId: 'winner-1',
+          cardId: 'card-1',
+          cardNumber: 1001,
+        },
+      ],
+    });
+
+    try {
+      const result = await playgroundService.drawNext(makeReq({ expectedVersion: 5, body: { forceNumber: 19 } }));
+
+      assert.equal(result.version, 5);
+      assert.equal(drawEvents.length, 1);
+      assert.equal(drawEvents[0].event, RealtimeEventContracts.draw.next);
+      assert.equal(drawEvents[0].sessionId, '11111111-1111-1111-1111-111111111111');
+      assert.equal(drawEvents[0].companyId, 'co-1');
+      assert.equal(drawEvents[0].payload.drawId, 'draw-1');
+      assert.equal(drawEvents[0].payload.calledNumber, 19);
+      assert.equal(drawEvents[0].payload.winnerCount, 1);
+
+      assert.equal(winnerEvents.length, 1);
+      assert.equal(winnerEvents[0].event, RealtimeEventContracts.winner.created);
+      assert.equal(winnerEvents[0].sessionId, '11111111-1111-1111-1111-111111111111');
+      assert.equal(winnerEvents[0].companyId, 'co-1');
+      assert.equal(winnerEvents[0].payload.winnerId, 'winner-1');
+      assert.equal(winnerEvents[0].payload.calledNumber, 19);
+    } finally {
+      realtimeGateway.emitDrawEvent = originalEmitDrawEvent;
+      realtimeGateway.emitWinnerEvent = originalEmitWinnerEvent;
+    }
+  });
+});
+
+test('claimWinner emits winner-claimed realtime event on success', async () => {
+  await withMockedPlayground(async () => {
+    const originalEmitWinnerEvent = realtimeGateway.emitWinnerEvent;
+    const winnerEvents = [];
+    realtimeGateway.emitWinnerEvent = (payload) => {
+      winnerEvents.push(payload);
+      return true;
+    };
+
+    playgroundRepository.findWinner = async () => ({
+      winnerId: 'winner-1',
+      sessionId: 'session-1',
+      companyId: 'co-1',
+      isClaimed: false,
+      version: 10,
+    });
+
+    playgroundRepository.claimWinner = async () => ({
+      winnerId: 'winner-1',
+      sessionId: 'session-1',
+      claimed: true,
+      claimedAt: '2026-01-01T12:00:00.000Z',
+      version: 11,
+    });
+
+    try {
+      const result = await playgroundService.claimWinner(makeReq({ expectedVersion: 10 }));
+
+      assert.equal(result.claimed, true);
+      assert.equal(winnerEvents.length, 1);
+      assert.equal(winnerEvents[0].event, RealtimeEventContracts.winner.claimed);
+      assert.equal(winnerEvents[0].sessionId, 'session-1');
+      assert.equal(winnerEvents[0].companyId, 'co-1');
+      assert.equal(winnerEvents[0].payload.winnerId, 'winner-1');
+      assert.equal(winnerEvents[0].payload.claimed, true);
+      assert.equal(winnerEvents[0].payload.version, 11);
+    } finally {
+      realtimeGateway.emitWinnerEvent = originalEmitWinnerEvent;
+    }
   });
 });
