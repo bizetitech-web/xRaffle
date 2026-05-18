@@ -35,3 +35,34 @@ test('realtime token endpoint returns socket token for authenticated user', { sk
   assert.equal(decoded.tokenType, 'realtime');
   assert.ok(decoded.roleLevel, 'Expected roleLevel in realtime token claims');
 });
+
+test('realtime token endpoint replays same response for repeated Idempotency-Key', { skip: !hasCreds }, async () => {
+  const { token } = await loginAsAdmin();
+  const idempotencyKey = `slice6-replay-${Date.now()}`;
+
+  const first = await apiRequest('/realtime/token', {
+    method: 'POST',
+    token,
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: {},
+  });
+
+  assert.equal(first.response.status, 200, `Expected 200, got ${first.response.status} body=${JSON.stringify(first.json)}`);
+  assert.ok(first.json?.socketToken, 'Expected socketToken in initial response payload');
+  assert.equal(first.response.headers.get('x-idempotency-replayed'), 'false');
+
+  const second = await apiRequest('/realtime/token', {
+    method: 'POST',
+    token,
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: {},
+  });
+
+  assert.equal(second.response.status, 200, `Expected 200, got ${second.response.status} body=${JSON.stringify(second.json)}`);
+  assert.equal(second.response.headers.get('x-idempotency-replayed'), 'true');
+  assert.deepEqual(second.json, first.json, 'Expected idempotency replay payload to match original response');
+});

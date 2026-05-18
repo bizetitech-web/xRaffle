@@ -4,12 +4,13 @@ export function uniqueSuffix() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export async function apiRequest(path, { method = 'GET', token, body } = {}) {
+export async function apiRequest(path, { method = 'GET', token, body, headers = {} } = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
