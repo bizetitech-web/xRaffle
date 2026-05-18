@@ -11,6 +11,7 @@ const {
   consumeRealtimeTokenSlot,
   getStateSizeSnapshot,
   getConfigSnapshot,
+  isValidIdempotencyKey,
 } = realtimeRoutesTesting;
 
 test.beforeEach(() => {
@@ -106,4 +107,27 @@ test('realtime token idempotency cache evicts oldest entries when max size is ex
   assert.equal(oldest, null);
   assert.ok(newest && typeof newest === 'object');
   assert.equal(newest.socketToken, `token-${idempotencyMaxEntries}`);
+});
+
+test('realtime token idempotency key validation accepts allowed characters and configured bounds', () => {
+  const { idempotencyKeyMinLength, idempotencyKeyMaxLength } = getConfigSnapshot();
+
+  const minValid = 'a'.repeat(idempotencyKeyMinLength);
+  const maxValid = 'z'.repeat(idempotencyKeyMaxLength);
+
+  assert.equal(isValidIdempotencyKey(minValid), true);
+  assert.equal(isValidIdempotencyKey(maxValid), true);
+  assert.equal(isValidIdempotencyKey('abc.DEF_123:xyz-9'), true);
+});
+
+test('realtime token idempotency key validation rejects invalid length or charset', () => {
+  const { idempotencyKeyMinLength, idempotencyKeyMaxLength } = getConfigSnapshot();
+
+  const tooShort = 'a'.repeat(Math.max(idempotencyKeyMinLength - 1, 0));
+  const tooLong = 'a'.repeat(idempotencyKeyMaxLength + 1);
+
+  assert.equal(isValidIdempotencyKey(tooShort), false);
+  assert.equal(isValidIdempotencyKey(tooLong), false);
+  assert.equal(isValidIdempotencyKey('bad key with spaces'), false);
+  assert.equal(isValidIdempotencyKey('bad/key'), false);
 });

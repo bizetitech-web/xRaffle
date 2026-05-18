@@ -66,3 +66,19 @@ test('realtime token endpoint replays same response for repeated Idempotency-Key
   assert.equal(second.response.headers.get('x-idempotency-replayed'), 'true');
   assert.deepEqual(second.json, first.json, 'Expected idempotency replay payload to match original response');
 });
+
+test('realtime token endpoint rejects malformed Idempotency-Key', { skip: !hasCreds }, async () => {
+  const { token } = await loginAsAdmin();
+
+  const { response, json } = await apiRequest('/realtime/token', {
+    method: 'POST',
+    token,
+    headers: {
+      'Idempotency-Key': 'bad key with spaces',
+    },
+    body: {},
+  });
+
+  assert.equal(response.status, 400, `Expected 400, got ${response.status} body=${JSON.stringify(json)}`);
+  assert.match(String(json?.error || ''), /Idempotency-Key must be/i);
+});
