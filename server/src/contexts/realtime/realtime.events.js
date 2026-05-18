@@ -14,6 +14,7 @@ export const RealtimeEventContracts = Object.freeze({
     cardSold: 'board:card-sold',
     cardUnsold: 'board:card-unsold',
     bulkUpdated: 'board:bulk-updated',
+    reset: 'board:reset',
   }),
   draw: Object.freeze({
     next: 'draw:next',
