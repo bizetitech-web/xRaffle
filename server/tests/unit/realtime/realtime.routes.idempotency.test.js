@@ -10,6 +10,7 @@ const {
   cleanupRealtimeTokenState,
   consumeRealtimeTokenSlot,
   getStateSizeSnapshot,
+  getConfigSnapshot,
 } = realtimeRoutesTesting;
 
 test.beforeEach(() => {
@@ -73,4 +74,36 @@ test('realtime token state cleanup removes stale idempotency and bucket entries'
   } finally {
     Date.now = realNow;
   }
+});
+
+test('realtime token idempotency cache stays bounded by configured max entries', () => {
+  const { idempotencyMaxEntries } = getConfigSnapshot();
+
+  for (let i = 0; i < idempotencyMaxEntries + 5; i += 1) {
+    cacheRealtimeTokenResponseForKey(`user-${i}`, `key-${i}`, {
+      socketToken: `token-${i}`,
+      expiresIn: 3600,
+    });
+  }
+
+  const sizes = getStateSizeSnapshot();
+  assert.equal(sizes.idempotencyEntries, idempotencyMaxEntries);
+});
+
+test('realtime token idempotency cache evicts oldest entries when max size is exceeded', () => {
+  const { idempotencyMaxEntries } = getConfigSnapshot();
+
+  for (let i = 0; i < idempotencyMaxEntries + 1; i += 1) {
+    cacheRealtimeTokenResponseForKey('user-eviction', `key-${i}`, {
+      socketToken: `token-${i}`,
+      expiresIn: 3600,
+    });
+  }
+
+  const oldest = readRealtimeTokenResponseFromCache('user-eviction', 'key-0');
+  const newest = readRealtimeTokenResponseFromCache('user-eviction', `key-${idempotencyMaxEntries}`);
+
+  assert.equal(oldest, null);
+  assert.ok(newest && typeof newest === 'object');
+  assert.equal(newest.socketToken, `token-${idempotencyMaxEntries}`);
 });

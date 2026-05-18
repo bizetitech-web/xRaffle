@@ -18,6 +18,7 @@ const REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS = parsePositiveInt(process.env.REAL
 const REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS, 60_000);
 const REALTIME_TOKEN_IDEMPOTENCY_TTL_MS = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_TTL_MS, 15_000);
 const REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH, 128);
+const REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES, 1000);
 const REALTIME_TOKEN_STATE_CLEANUP_INTERVAL = parsePositiveInt(process.env.REALTIME_TOKEN_STATE_CLEANUP_INTERVAL, 50);
 
 let realtimeTokenStateOperationCount = 0;
@@ -43,6 +44,17 @@ function maybeCleanupRealtimeTokenState(now = Date.now()) {
   }
 
   cleanupRealtimeTokenState(now);
+}
+
+function enforceIdempotencyCacheCapacity() {
+  while (realtimeTokenIdempotencyCache.size > REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES) {
+    const oldestKey = realtimeTokenIdempotencyCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+
+    realtimeTokenIdempotencyCache.delete(oldestKey);
+  }
 }
 
 function buildIdempotencyCacheKey(userId, idempotencyKey) {
@@ -76,6 +88,8 @@ function cacheRealtimeTokenResponseForKey(userId, idempotencyKey, payload) {
     expiresAt: Date.now() + REALTIME_TOKEN_IDEMPOTENCY_TTL_MS,
     payload,
   });
+
+  enforceIdempotencyCacheCapacity();
 }
 
 function consumeRealtimeTokenSlot(userId) {
@@ -214,6 +228,11 @@ export const realtimeRoutesTesting = {
     return {
       buckets: realtimeTokenBuckets.size,
       idempotencyEntries: realtimeTokenIdempotencyCache.size,
+    };
+  },
+  getConfigSnapshot() {
+    return {
+      idempotencyMaxEntries: REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES,
     };
   },
 };
