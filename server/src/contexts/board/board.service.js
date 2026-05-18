@@ -3,6 +3,8 @@ import { ErrorCodes } from '../../core/errors/errorCodes.js';
 import { withTransaction } from '../../core/db/transaction.js';
 import pool from '../../../config/database.js';
 import { boardRepository } from './board.repository.js';
+import { realtimeGateway } from '../realtime/realtime.gateway.js';
+import { RealtimeEventContracts } from '../realtime/realtime.events.js';
 
 const assertScope = (req, session) => {
   const isSuperAdmin = req.user?.role_level === 1;
@@ -18,6 +20,39 @@ const assertVersion = (expectedVersion, currentVersion) => {
       currentVersion: Number(currentVersion),
     });
   }
+};
+
+const emitBoardEvent = ({
+  event,
+  action,
+  sessionId,
+  companyId,
+  actorUserId,
+  cardId,
+  cardNumber,
+  processedCount,
+  skippedCount,
+  totals,
+  revenuePreview,
+  version,
+}) => {
+  realtimeGateway.emitBoardEvent({
+    event,
+    sessionId,
+    companyId,
+    payload: {
+      action,
+      sessionId,
+      actorUserId,
+      ...(cardId ? { cardId } : {}),
+      ...(cardNumber !== undefined ? { cardNumber } : {}),
+      ...(processedCount !== undefined ? { processedCount } : {}),
+      ...(skippedCount !== undefined ? { skippedCount } : {}),
+      ...(totals ? { totals } : {}),
+      ...(revenuePreview !== undefined ? { revenuePreview } : {}),
+      version,
+    },
+  });
 };
 
 export class BoardService {
@@ -80,6 +115,18 @@ export class BoardService {
       const refreshed = await boardRepository.findSession(connection, req.params.sessionId);
       const totals = await boardRepository.getTotals(connection, req.params.sessionId);
 
+      emitBoardEvent({
+        event: RealtimeEventContracts.board.cardSold,
+        action: 'SELL',
+        sessionId: req.params.sessionId,
+        companyId: session.companyId,
+        actorUserId: req.user.sub,
+        cardId: result.card.cardId,
+        cardNumber: Number(result.card.cardNumber),
+        totals,
+        version: refreshed.version,
+      });
+
       return {
         cardState: 'SOLD',
         cardId: result.card.cardId,
@@ -122,6 +169,18 @@ export class BoardService {
       const refreshed = await boardRepository.findSession(connection, req.params.sessionId);
       const totals = await boardRepository.getTotals(connection, req.params.sessionId);
 
+      emitBoardEvent({
+        event: RealtimeEventContracts.board.cardUnsold,
+        action: 'UNSELL',
+        sessionId: req.params.sessionId,
+        companyId: session.companyId,
+        actorUserId: req.user.sub,
+        cardId: result.card.cardId,
+        cardNumber: Number(result.card.cardNumber),
+        totals,
+        version: refreshed.version,
+      });
+
       return {
         cardState: 'AVAILABLE',
         cardId: result.card.cardId,
@@ -158,6 +217,20 @@ export class BoardService {
       });
 
       const refreshed = await boardRepository.findSession(connection, req.params.sessionId);
+
+      emitBoardEvent({
+        event: RealtimeEventContracts.board.bulkUpdated,
+        action: String(req.body.action || '').toUpperCase(),
+        sessionId: req.params.sessionId,
+        companyId: session.companyId,
+        actorUserId: req.user.sub,
+        processedCount: result.processedCount,
+        skippedCount: result.skippedCount,
+        totals: result.totals,
+        revenuePreview: result.revenuePreview,
+        version: refreshed.version,
+      });
+
       return {
         ...result,
         version: refreshed.version,
@@ -183,6 +256,17 @@ export class BoardService {
 
       const result = await boardRepository.resetBoard(connection, req.params.sessionId);
       const refreshed = await boardRepository.findSession(connection, req.params.sessionId);
+
+      emitBoardEvent({
+        event: RealtimeEventContracts.board.reset,
+        action: 'RESET',
+        sessionId: req.params.sessionId,
+        companyId: session.companyId,
+        actorUserId: req.user.sub,
+        totals: result.totals,
+        version: refreshed.version,
+      });
+
       return {
         ...result,
         version: refreshed.version,

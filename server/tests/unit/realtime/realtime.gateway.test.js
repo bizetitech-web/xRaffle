@@ -66,6 +66,40 @@ test('realtime gateway emits envelope to session and company rooms', () => {
   assert.match(emitted[0].envelope.timestamp, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test('realtime gateway emitBoardEvent targets expected rooms with board contract event', () => {
+  const gateway = createRealtimeGateway();
+  const emitted = [];
+
+  gateway.io = {
+    to: (room) => ({
+      emit: (event, envelope) => {
+        emitted.push({ room, event, envelope });
+      },
+    }),
+  };
+
+  const ok = gateway.emitBoardEvent({
+    event: RealtimeEventContracts.board.cardSold,
+    sessionId: 'session-b1',
+    companyId: 'co-b1',
+    payload: {
+      action: 'SELL',
+      cardNumber: 7,
+      version: 12,
+    },
+  });
+
+  assert.equal(ok, true);
+  assert.equal(emitted.length, 2);
+  assert.equal(emitted[0].room, 'session:session-b1');
+  assert.equal(emitted[1].room, 'company:co-b1');
+  assert.equal(emitted[0].event, RealtimeEventContracts.board.cardSold);
+  assert.equal(emitted[0].envelope.payload.action, 'SELL');
+  assert.equal(emitted[0].envelope.payload.cardNumber, 7);
+  assert.equal(emitted[0].envelope.meta.sessionId, 'session-b1');
+  assert.equal(emitted[0].envelope.meta.companyId, 'co-b1');
+});
+
 test('realtime auth resolves bearer token from handshake auth block', () => {
   const token = 'abc123';
   const socket = {

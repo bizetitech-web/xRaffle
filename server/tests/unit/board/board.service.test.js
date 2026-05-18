@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import pool from '../../../config/database.js';
 import { boardService } from '../../../src/contexts/board/board.service.js';
 import { boardRepository } from '../../../src/contexts/board/board.repository.js';
+import { realtimeGateway } from '../../../src/contexts/realtime/realtime.gateway.js';
+import { RealtimeEventContracts } from '../../../src/contexts/realtime/realtime.events.js';
 
 const makeReq = ({
   sessionId = '11111111-1111-1111-1111-111111111111',
@@ -121,91 +123,127 @@ test('sellCard rejects non-ACTIVE session', async () => {
 });
 
 test('sellCard returns sold card state and updated totals', async () => {
-  await withMockedBoard(async () => {
-    let findCount = 0;
-    boardRepository.findSession = async () => {
-      findCount += 1;
-      return {
-        id: 'session-1',
-        companyId: 'co-1',
-        status: 'ACTIVE',
-        cardPrice: 100,
-        version: findCount === 1 ? 5 : 6,
+  const originalEmitBoardEvent = realtimeGateway.emitBoardEvent;
+  const boardEvents = [];
+  realtimeGateway.emitBoardEvent = (payload) => {
+    boardEvents.push(payload);
+    return true;
+  };
+
+  try {
+    await withMockedBoard(async () => {
+      let findCount = 0;
+      boardRepository.findSession = async () => {
+        findCount += 1;
+        return {
+          id: 'session-1',
+          companyId: 'co-1',
+          status: 'ACTIVE',
+          cardPrice: 100,
+          version: findCount === 1 ? 5 : 6,
+        };
       };
-    };
 
-    boardRepository.sellCard = async () => ({
-      skipped: false,
-      card: {
-        cardId: 'card-1',
-        cardNumber: 4,
-      },
-    });
+      boardRepository.sellCard = async () => ({
+        skipped: false,
+        card: {
+          cardId: 'card-1',
+          cardNumber: 4,
+        },
+      });
 
-    boardRepository.getTotals = async () => ({
-      available: 99,
-      sold: 1,
-      winner: 0,
-      claimed: 0,
-      revenue: 100,
-    });
-
-    const result = await boardService.sellCard(makeReq({ expectedVersion: 5, body: { cardNumber: 4 } }));
-
-    assert.deepEqual(result, {
-      cardState: 'SOLD',
-      cardId: 'card-1',
-      cardNumber: 4,
-      totals: {
+      boardRepository.getTotals = async () => ({
         available: 99,
         sold: 1,
         winner: 0,
         claimed: 0,
         revenue: 100,
-      },
-      version: 6,
+      });
+
+      const result = await boardService.sellCard(makeReq({ expectedVersion: 5, body: { cardNumber: 4 } }));
+
+      assert.deepEqual(result, {
+        cardState: 'SOLD',
+        cardId: 'card-1',
+        cardNumber: 4,
+        totals: {
+          available: 99,
+          sold: 1,
+          winner: 0,
+          claimed: 0,
+          revenue: 100,
+        },
+        version: 6,
+      });
+
+      assert.equal(boardEvents.length, 1);
+      assert.equal(boardEvents[0].event, RealtimeEventContracts.board.cardSold);
+      assert.equal(boardEvents[0].sessionId, '11111111-1111-1111-1111-111111111111');
+      assert.equal(boardEvents[0].companyId, 'co-1');
+      assert.equal(boardEvents[0].payload.action, 'SELL');
+      assert.equal(boardEvents[0].payload.cardNumber, 4);
+      assert.equal(boardEvents[0].payload.version, 6);
     });
-  });
+  } finally {
+    realtimeGateway.emitBoardEvent = originalEmitBoardEvent;
+  }
 });
 
 test('bulkAction returns processed and skipped counts', async () => {
-  await withMockedBoard(async () => {
-    let findCount = 0;
-    boardRepository.findSession = async () => {
-      findCount += 1;
-      return {
-        id: 'session-1',
-        companyId: 'co-1',
-        status: 'ACTIVE',
-        cardPrice: 100,
-        version: findCount === 1 ? 10 : 11,
+  const originalEmitBoardEvent = realtimeGateway.emitBoardEvent;
+  const boardEvents = [];
+  realtimeGateway.emitBoardEvent = (payload) => {
+    boardEvents.push(payload);
+    return true;
+  };
+
+  try {
+    await withMockedBoard(async () => {
+      let findCount = 0;
+      boardRepository.findSession = async () => {
+        findCount += 1;
+        return {
+          id: 'session-1',
+          companyId: 'co-1',
+          status: 'ACTIVE',
+          cardPrice: 100,
+          version: findCount === 1 ? 10 : 11,
+        };
       };
-    };
 
-    boardRepository.bulkAction = async () => ({
-      processedCount: 2,
-      skippedCount: 1,
-      totals: {
-        available: 97,
-        sold: 3,
-        winner: 0,
-        claimed: 0,
-        revenue: 300,
-      },
-      revenuePreview: 300,
+      boardRepository.bulkAction = async () => ({
+        processedCount: 2,
+        skippedCount: 1,
+        totals: {
+          available: 97,
+          sold: 3,
+          winner: 0,
+          claimed: 0,
+          revenue: 300,
+        },
+        revenuePreview: 300,
+      });
+
+      const result = await boardService.bulkAction(
+        makeReq({
+          expectedVersion: 10,
+          body: { action: 'SELL', cardNumbers: [1, 2, 3] },
+        })
+      );
+
+      assert.equal(result.processedCount, 2);
+      assert.equal(result.skippedCount, 1);
+      assert.equal(result.version, 11);
+      assert.equal(boardEvents.length, 1);
+      assert.equal(boardEvents[0].event, RealtimeEventContracts.board.bulkUpdated);
+      assert.equal(boardEvents[0].payload.action, 'SELL');
+      assert.equal(boardEvents[0].payload.processedCount, 2);
+      assert.equal(boardEvents[0].payload.skippedCount, 1);
+      assert.equal(boardEvents[0].payload.version, 11);
     });
-
-    const result = await boardService.bulkAction(
-      makeReq({
-        expectedVersion: 10,
-        body: { action: 'SELL', cardNumbers: [1, 2, 3] },
-      })
-    );
-
-    assert.equal(result.processedCount, 2);
-    assert.equal(result.skippedCount, 1);
-    assert.equal(result.version, 11);
-  });
+  } finally {
+    realtimeGateway.emitBoardEvent = originalEmitBoardEvent;
+  }
 });
 
 test('resetBoard rejects closed sessions', async () => {
@@ -226,4 +264,49 @@ test('resetBoard rejects closed sessions', async () => {
       }
     );
   });
+});
+
+test('resetBoard emits reset board event with latest version', async () => {
+  const originalEmitBoardEvent = realtimeGateway.emitBoardEvent;
+  const boardEvents = [];
+  realtimeGateway.emitBoardEvent = (payload) => {
+    boardEvents.push(payload);
+    return true;
+  };
+
+  try {
+    await withMockedBoard(async () => {
+      let findCount = 0;
+      boardRepository.findSession = async () => {
+        findCount += 1;
+        return {
+          id: 'session-1',
+          companyId: 'co-1',
+          status: 'ACTIVE',
+          version: findCount === 1 ? 7 : 8,
+        };
+      };
+
+      boardRepository.resetBoard = async () => ({
+        totals: {
+          available: 100,
+          sold: 0,
+          winner: 0,
+          claimed: 0,
+          revenue: 0,
+        },
+      });
+
+      const result = await boardService.resetBoard(makeReq({ expectedVersion: 7 }));
+
+      assert.equal(result.version, 8);
+      assert.equal(boardEvents.length, 1);
+      assert.equal(boardEvents[0].event, RealtimeEventContracts.board.reset);
+      assert.equal(boardEvents[0].payload.action, 'RESET');
+      assert.equal(boardEvents[0].payload.version, 8);
+      assert.equal(boardEvents[0].payload.totals.available, 100);
+    });
+  } finally {
+    realtimeGateway.emitBoardEvent = originalEmitBoardEvent;
+  }
 });
