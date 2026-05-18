@@ -7,6 +7,9 @@ const {
   resetRealtimeTokenRateLimitState,
   cacheRealtimeTokenResponseForKey,
   readRealtimeTokenResponseFromCache,
+  cleanupRealtimeTokenState,
+  consumeRealtimeTokenSlot,
+  getStateSizeSnapshot,
 } = realtimeRoutesTesting;
 
 test.beforeEach(() => {
@@ -43,6 +46,30 @@ test('realtime token idempotency cache expires entries after ttl window', () => 
     const cached = readRealtimeTokenResponseFromCache('user-a', 'key-a');
 
     assert.equal(cached, null);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('realtime token state cleanup removes stale idempotency and bucket entries', () => {
+  const realNow = Date.now;
+  const start = 1_000_000;
+
+  try {
+    Date.now = () => start;
+    consumeRealtimeTokenSlot('user-cleanup');
+    cacheRealtimeTokenResponseForKey('user-cleanup', 'key-cleanup', { socketToken: 'token-a', expiresIn: 3600 });
+
+    let sizes = getStateSizeSnapshot();
+    assert.equal(sizes.buckets, 1);
+    assert.equal(sizes.idempotencyEntries, 1);
+
+    Date.now = () => start + 70_000;
+    cleanupRealtimeTokenState();
+
+    sizes = getStateSizeSnapshot();
+    assert.equal(sizes.buckets, 0);
+    assert.equal(sizes.idempotencyEntries, 0);
   } finally {
     Date.now = realNow;
   }
