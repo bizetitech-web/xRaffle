@@ -7,6 +7,26 @@ import {
 } from './realtime.events.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+const REALTIME_TOKEN_TTL_SECONDS = Number(process.env.REALTIME_TOKEN_TTL_SECONDS || 3600);
+
+const issueRealtimeToken = (user, { expiresInSeconds = REALTIME_TOKEN_TTL_SECONDS } = {}) => {
+  if (!user?.sub) {
+    throw new Error('Cannot issue realtime token without user subject');
+  }
+
+  return jwt.sign(
+    {
+      sub: user.sub,
+      email: user.email,
+      role: user.role,
+      roleLevel: user.roleLevel,
+      hotelCompanyId: user.hotelCompanyId,
+      tokenType: 'realtime',
+    },
+    JWT_SECRET,
+    { expiresIn: expiresInSeconds }
+  );
+};
 
 const normalizeToken = (value) => String(value || '').replace(/^Bearer\s+/i, '').trim();
 
@@ -152,6 +172,7 @@ export class RealtimeGateway {
 export const createRealtimeGateway = () => new RealtimeGateway();
 export const realtimeGateway = createRealtimeGateway();
 export const realtimeGatewayTesting = {
+  issueRealtimeToken,
   resolveTokenFromSocket,
   decodeRealtimeToken,
 };
