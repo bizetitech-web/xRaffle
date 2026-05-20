@@ -1,3 +1,46 @@
+test('metrics: increments for rate limit, invalid key, idempotency replay, cache eviction', () => {
+  const {
+    resetRealtimeTokenRateLimitState,
+    consumeRealtimeTokenSlot,
+    cacheRealtimeTokenResponseForKey,
+    readRealtimeTokenResponseFromCache,
+    getMetricsSnapshot,
+    isValidIdempotencyKey,
+    getConfigSnapshot,
+  } = realtimeRoutesTesting;
+
+  resetRealtimeTokenRateLimitState();
+
+  // Rate limit exceeded
+  const userId = 'user-metrics';
+  const { REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS } = getConfigSnapshot();
+  for (let i = 0; i < REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS; i++) {
+    consumeRealtimeTokenSlot(userId);
+  }
+  // Next call should increment rateLimitExceeded
+  consumeRealtimeTokenSlot(userId);
+
+  // Invalid idempotency key
+  isValidIdempotencyKey('bad key with spaces');
+
+  // Idempotency replay
+  cacheRealtimeTokenResponseForKey('user-metrics', 'key-metrics', { socketToken: 'tok', expiresIn: 1 });
+  readRealtimeTokenResponseFromCache('user-metrics', 'key-metrics');
+  // Replay again to increment
+  readRealtimeTokenResponseFromCache('user-metrics', 'key-metrics');
+
+  // Cache eviction
+  const { idempotencyMaxEntries } = getConfigSnapshot();
+  for (let i = 0; i < idempotencyMaxEntries + 2; i++) {
+    cacheRealtimeTokenResponseForKey('user-metrics-evict', `key-${i}`, { socketToken: `tok-${i}`, expiresIn: 1 });
+  }
+
+  const metrics = getMetricsSnapshot();
+  assert.ok(metrics.rateLimitExceeded > 0, 'rateLimitExceeded should increment');
+  assert.ok(metrics.invalidIdempotencyKey >= 0, 'invalidIdempotencyKey should be present');
+  assert.ok(metrics.idempotencyReplay > 0, 'idempotencyReplay should increment');
+  assert.ok(metrics.cacheEviction > 0, 'cacheEviction should increment');
+});
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

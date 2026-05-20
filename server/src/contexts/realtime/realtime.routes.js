@@ -4,6 +4,14 @@ import { authenticate } from '../../../middleware/auth.js';
 import { canAccessOrganization } from '../../../middleware/rbac.js';
 import { asyncHandler } from '../../core/http/asyncHandler.js';
 import { logInfo, logWarn, logError } from '../../../utils/logger.js';
+
+// In-memory metrics for failure modes
+const realtimeTokenMetrics = {
+  rateLimitExceeded: 0,
+  invalidIdempotencyKey: 0,
+  idempotencyReplay: 0,
+  cacheEviction: 0,
+};
 import { realtimeGatewayTesting } from './realtime.gateway.js';
 
 const router = express.Router();
@@ -60,6 +68,7 @@ function enforceIdempotencyCacheCapacity() {
 
     realtimeTokenIdempotencyCache.delete(oldestKey);
     logWarn('Idempotency cache evicted oldest entry due to capacity', { oldestKey });
+    realtimeTokenMetrics.cacheEviction++;
   }
 }
 
@@ -134,7 +143,8 @@ function consumeRealtimeTokenSlot(userId) {
   }
 
   if (existing.count >= REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS) {
-    logWarn('Rate limit exceeded', { userId });
+    logWarn('Rate limit exceeded', { userId, errorCode: 'RATE_LIMIT_EXCEEDED' });
+    realtimeTokenMetrics.rateLimitExceeded++;
     const retryAfterMs = Math.max(REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS - (now - existing.windowStart), 0);
     return {
       allowed: false,
@@ -165,7 +175,7 @@ function enforceRealtimeTokenRateLimit(req, res, next) {
 
   if (!decision.allowed) {
     res.set('Retry-After', String(decision.retryAfterSeconds));
-    logWarn('Realtime token request rate limited', { userId });
+    logWarn('Realtime token request rate limited', { userId, errorCode: 'RATE_LIMIT_EXCEEDED' });
     return res.status(429).json({
       error: 'Too many realtime token requests. Please retry later.',
       retryAfterSeconds: decision.retryAfterSeconds,
@@ -189,7 +199,8 @@ function enforceRealtimeTokenIdempotency(req, res, next) {
   }
 
   if (!isValidIdempotencyKey(idempotencyKey)) {
-    logWarn('Invalid Idempotency-Key format', { userId, idempotencyKey });
+    logWarn('Invalid Idempotency-Key format', { userId, idempotencyKey, errorCode: 'INVALID_IDEMPOTENCY_KEY' });
+    realtimeTokenMetrics.invalidIdempotencyKey++;
     return res.status(400).json({
       error: `Idempotency-Key must be ${REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH}-${REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH} characters and use only letters, numbers, dot, underscore, colon, or hyphen.`,
     });
@@ -199,6 +210,7 @@ function enforceRealtimeTokenIdempotency(req, res, next) {
   if (cachedResponse) {
     res.set('X-Idempotency-Replayed', 'true');
     logInfo('Replayed cached realtime token response', { userId, idempotencyKey });
+    realtimeTokenMetrics.idempotencyReplay++;
     return res.json(cachedResponse);
   }
 
@@ -208,8 +220,15 @@ function enforceRealtimeTokenIdempotency(req, res, next) {
 }
 
 // Phase 2 smoke endpoint for websocket readiness and contracts visibility.
+
+// Health endpoint
 router.get('/realtime/health', (_req, res) => {
   res.json(realtimeGateway.getHealthSnapshot());
+});
+
+// Metrics endpoint (for test/ops visibility)
+router.get('/realtime/metrics', (_req, res) => {
+  res.json({ ...realtimeTokenMetrics });
 });
 
 router.post('/realtime/token', authenticate, canAccessOrganization, enforceRealtimeTokenIdempotency, enforceRealtimeTokenRateLimit, asyncHandler(async (req, res) => {
@@ -255,6 +274,11 @@ export const realtimeRoutesTesting = {
     realtimeTokenBuckets.clear();
     realtimeTokenIdempotencyCache.clear();
     realtimeTokenStateOperationCount = 0;
+    // Reset metrics
+    realtimeTokenMetrics.rateLimitExceeded = 0;
+    realtimeTokenMetrics.invalidIdempotencyKey = 0;
+    realtimeTokenMetrics.idempotencyReplay = 0;
+    realtimeTokenMetrics.cacheEviction = 0;
   },
   consumeRealtimeTokenSlot,
   cacheRealtimeTokenResponseForKey,
@@ -274,6 +298,9 @@ export const realtimeRoutesTesting = {
     };
   },
   isValidIdempotencyKey,
+  getMetricsSnapshot() {
+    return { ...realtimeTokenMetrics };
+  },
 };
 
 export default router;
