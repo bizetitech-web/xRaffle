@@ -17,9 +17,11 @@ const parsePositiveInt = (value, fallback) => {
 const REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS = parsePositiveInt(process.env.REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS, 20);
 const REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS = parsePositiveInt(process.env.REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS, 60_000);
 const REALTIME_TOKEN_IDEMPOTENCY_TTL_MS = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_TTL_MS, 15_000);
+const REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH, 8);
 const REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH, 128);
 const REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES = parsePositiveInt(process.env.REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES, 1000);
 const REALTIME_TOKEN_STATE_CLEANUP_INTERVAL = parsePositiveInt(process.env.REALTIME_TOKEN_STATE_CLEANUP_INTERVAL, 50);
+const REALTIME_TOKEN_IDEMPOTENCY_KEY_ALLOWED_PATTERN = /^[A-Za-z0-9._:-]+$/;
 
 let realtimeTokenStateOperationCount = 0;
 
@@ -59,6 +61,18 @@ function enforceIdempotencyCacheCapacity() {
 
 function buildIdempotencyCacheKey(userId, idempotencyKey) {
   return `${userId}:${idempotencyKey}`;
+}
+
+function isValidIdempotencyKey(idempotencyKey) {
+  if (idempotencyKey.length < REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH) {
+    return false;
+  }
+
+  if (idempotencyKey.length > REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH) {
+    return false;
+  }
+
+  return REALTIME_TOKEN_IDEMPOTENCY_KEY_ALLOWED_PATTERN.test(idempotencyKey);
 }
 
 function readRealtimeTokenResponseFromCache(userId, idempotencyKey) {
@@ -164,9 +178,9 @@ function enforceRealtimeTokenIdempotency(req, res, next) {
     return next();
   }
 
-  if (idempotencyKey.length > REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH) {
+  if (!isValidIdempotencyKey(idempotencyKey)) {
     return res.status(400).json({
-      error: `Idempotency-Key is too long (max ${REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH} characters).`,
+      error: `Idempotency-Key must be ${REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH}-${REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH} characters and use only letters, numbers, dot, underscore, colon, or hyphen.`,
     });
   }
 
@@ -232,9 +246,12 @@ export const realtimeRoutesTesting = {
   },
   getConfigSnapshot() {
     return {
+      idempotencyKeyMinLength: REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH,
+      idempotencyKeyMaxLength: REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH,
       idempotencyMaxEntries: REALTIME_TOKEN_IDEMPOTENCY_MAX_ENTRIES,
     };
   },
+  isValidIdempotencyKey,
 };
 
 export default router;
