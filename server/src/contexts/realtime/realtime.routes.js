@@ -3,6 +3,7 @@ import { realtimeGateway } from './realtime.gateway.js';
 import { authenticate } from '../../../middleware/auth.js';
 import { canAccessOrganization } from '../../../middleware/rbac.js';
 import { asyncHandler } from '../../core/http/asyncHandler.js';
+import { logInfo, logWarn, logError } from '../../../utils/logger.js';
 import { realtimeGatewayTesting } from './realtime.gateway.js';
 
 const router = express.Router();
@@ -29,12 +30,14 @@ function cleanupRealtimeTokenState(now = Date.now()) {
   for (const [userId, bucket] of realtimeTokenBuckets.entries()) {
     if (now - bucket.windowStart >= REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS) {
       realtimeTokenBuckets.delete(userId);
+      logInfo('Rate limit bucket evicted', { userId });
     }
   }
 
   for (const [cacheKey, entry] of realtimeTokenIdempotencyCache.entries()) {
     if (now >= entry.expiresAt) {
       realtimeTokenIdempotencyCache.delete(cacheKey);
+      logInfo('Idempotency cache entry expired', { cacheKey });
     }
   }
 }
@@ -56,6 +59,7 @@ function enforceIdempotencyCacheCapacity() {
     }
 
     realtimeTokenIdempotencyCache.delete(oldestKey);
+    logWarn('Idempotency cache evicted oldest entry due to capacity', { oldestKey });
   }
 }
 
@@ -88,9 +92,11 @@ function readRealtimeTokenResponseFromCache(userId, idempotencyKey) {
   const now = Date.now();
   if (now >= existing.expiresAt) {
     realtimeTokenIdempotencyCache.delete(cacheKey);
+    logInfo('Idempotency cache entry expired on read', { cacheKey });
     return null;
   }
 
+  logInfo('Idempotency cache hit', { userId, idempotencyKey });
   return existing.payload;
 }
 
@@ -104,6 +110,7 @@ function cacheRealtimeTokenResponseForKey(userId, idempotencyKey, payload) {
   });
 
   enforceIdempotencyCacheCapacity();
+  logInfo('Cached realtime token response', { userId, idempotencyKey });
 }
 
 function consumeRealtimeTokenSlot(userId) {
@@ -117,6 +124,7 @@ function consumeRealtimeTokenSlot(userId) {
       windowStart: now,
       count: 1,
     });
+    logInfo('Started new rate limit window', { userId });
 
     return {
       allowed: true,
@@ -126,6 +134,7 @@ function consumeRealtimeTokenSlot(userId) {
   }
 
   if (existing.count >= REALTIME_TOKEN_RATE_LIMIT_MAX_REQUESTS) {
+    logWarn('Rate limit exceeded', { userId });
     const retryAfterMs = Math.max(REALTIME_TOKEN_RATE_LIMIT_WINDOW_MS - (now - existing.windowStart), 0);
     return {
       allowed: false,
@@ -156,6 +165,7 @@ function enforceRealtimeTokenRateLimit(req, res, next) {
 
   if (!decision.allowed) {
     res.set('Retry-After', String(decision.retryAfterSeconds));
+    logWarn('Realtime token request rate limited', { userId });
     return res.status(429).json({
       error: 'Too many realtime token requests. Please retry later.',
       retryAfterSeconds: decision.retryAfterSeconds,
@@ -179,6 +189,7 @@ function enforceRealtimeTokenIdempotency(req, res, next) {
   }
 
   if (!isValidIdempotencyKey(idempotencyKey)) {
+    logWarn('Invalid Idempotency-Key format', { userId, idempotencyKey });
     return res.status(400).json({
       error: `Idempotency-Key must be ${REALTIME_TOKEN_IDEMPOTENCY_KEY_MIN_LENGTH}-${REALTIME_TOKEN_IDEMPOTENCY_KEY_MAX_LENGTH} characters and use only letters, numbers, dot, underscore, colon, or hyphen.`,
     });
@@ -187,6 +198,7 @@ function enforceRealtimeTokenIdempotency(req, res, next) {
   const cachedResponse = readRealtimeTokenResponseFromCache(userId, idempotencyKey);
   if (cachedResponse) {
     res.set('X-Idempotency-Replayed', 'true');
+    logInfo('Replayed cached realtime token response', { userId, idempotencyKey });
     return res.json(cachedResponse);
   }
 
@@ -201,31 +213,41 @@ router.get('/realtime/health', (_req, res) => {
 });
 
 router.post('/realtime/token', authenticate, canAccessOrganization, enforceRealtimeTokenIdempotency, enforceRealtimeTokenRateLimit, asyncHandler(async (req, res) => {
-  const roleLevel = req.userRole?.level ?? req.user?.role_level;
-  const role = req.userRole?.name ?? req.user?.role ?? 'user';
-  const hotelCompanyId = req.hotelCompanyId ?? req.user?.hotel_company_id ?? null;
-  const expiresIn = Number(process.env.REALTIME_TOKEN_TTL_SECONDS || 3600);
+  try {
+    const roleLevel = req.userRole?.level ?? req.user?.role_level;
+    const role = req.userRole?.name ?? req.user?.role ?? 'user';
+    const hotelCompanyId = req.hotelCompanyId ?? req.user?.hotel_company_id ?? null;
+    const expiresIn = Number(process.env.REALTIME_TOKEN_TTL_SECONDS || 3600);
 
-  const socketToken = realtimeGatewayTesting.issueRealtimeToken({
-    sub: req.user.sub,
-    email: req.user.email,
-    role,
-    roleLevel,
-    hotelCompanyId,
-  }, {
-    expiresInSeconds: expiresIn,
-  });
+    const socketToken = realtimeGatewayTesting.issueRealtimeToken({
+      sub: req.user.sub,
+      email: req.user.email,
+      role,
+      roleLevel,
+      hotelCompanyId,
+    }, {
+      expiresInSeconds: expiresIn,
+    });
 
-  const responsePayload = {
-    socketToken,
-    expiresIn,
-  };
+    const responsePayload = {
+      socketToken,
+      expiresIn,
+    };
 
-  if (req.realtimeTokenIdempotencyKey) {
-    cacheRealtimeTokenResponseForKey(req.user.sub, req.realtimeTokenIdempotencyKey, responsePayload);
+    if (req.realtimeTokenIdempotencyKey) {
+      cacheRealtimeTokenResponseForKey(req.user.sub, req.realtimeTokenIdempotencyKey, responsePayload);
+    }
+
+    res.json(responsePayload);
+    logInfo('Issued new realtime socket token', {
+      userId: req.user.sub,
+      idempotencyKey: req.realtimeTokenIdempotencyKey || null,
+      expiresIn,
+    });
+  } catch (err) {
+    logError('Error issuing realtime socket token', { userId: req.user?.sub, error: err });
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json(responsePayload);
 }));
 
 export const realtimeRoutesTesting = {
