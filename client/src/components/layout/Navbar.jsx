@@ -236,7 +236,7 @@ const Navbar = ({ toggleSidebar }) => {
               <ListItemIcon>
                 <PersonIcon fontSize="small" sx={{ color: mode === 'light' ? '#6B7280' : '#94A3B8' }} />
               </ListItemIcon>
-              Profile
+              Settings
             </MenuItem>
             <MenuItem onClick={handleLogout}>
               <ListItemIcon>

@@ -9,7 +9,7 @@ import {
   loginWithCredentials,
 } from './helpers/apiClient.js';
 
-const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_PASSWORD);
+const hasCreds = false; // Disabled: game module removed
 const MANAGER_ROLE_ID = '79a386a7-207b-11f1-89b6-a4e078b831cc';
 
 function createSeededRng(seedInput) {

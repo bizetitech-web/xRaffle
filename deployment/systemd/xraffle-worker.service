@@ -1,0 +1,14 @@
+[Unit]
+Description=xRaffle Card Worker
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/xraffle/server
+ExecStart=/usr/bin/node src/worker.js
+Restart=on-failure
+Environment=NODE_ENV=production JOB_QUEUE_ENABLED=true
+
+[Install]
+WantedBy=multi-user.target

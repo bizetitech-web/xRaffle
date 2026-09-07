@@ -1,13 +1,67 @@
 import express from 'express';
 import { query, param, validationResult } from 'express-validator';
 import { authenticate } from '../middleware/auth.js';
-import { canAccessOrganization, hasPermission } from '../middleware/rbac.js';
+import { canAccessOrganization, hasAnyPermission, hasPermission } from '../middleware/rbac.js';
 import pool from '../config/database.js';
 
 const router = express.Router();
 
 router.use(authenticate);
 router.use(canAccessOrganization);
+
+router.get(
+  '/branches',
+  hasAnyPermission(['VIEW_DAILY_REPORTS', 'VIEW_REPORTS']),
+  async (req, res) => {
+    try {
+      const isSuperAdmin = req.user.role_level === 1;
+      const roleLevel = Number(req.user.role_level || 99);
+      const requestedCompanyId = req.query.companyId;
+
+      const [userRows] = await pool.query(
+        `SELECT branch_id
+         FROM users
+         WHERE id = ?
+         LIMIT 1`,
+        [req.user.sub]
+      );
+
+      const assignedBranchId = userRows[0]?.branch_id || null;
+      const effectiveCompanyId = isSuperAdmin ? requestedCompanyId : req.hotelCompanyId;
+
+      let sql = `
+        SELECT hb.id, hb.company_id, hb.name, hb.branch_code, hb.status, hc.name AS company_name
+        FROM hotel_branches hb
+        JOIN hotel_companies hc ON hc.id = hb.company_id
+      `;
+      const filters = [];
+      const params = [];
+
+      if (effectiveCompanyId) {
+        filters.push('hb.company_id = ?');
+        params.push(effectiveCompanyId);
+      }
+
+      // Operators are branch-scoped: if assigned a branch, force branch filter.
+      if (roleLevel >= 3 && assignedBranchId) {
+        filters.push('hb.id = ?');
+        params.push(assignedBranchId);
+      }
+
+      if (filters.length > 0) {
+        sql += ` WHERE ${filters.join(' AND ')}`;
+      }
+
+      sql += ' ORDER BY hb.name ASC';
+
+      const [rows] = await pool.query(sql, params);
+      return res.json(rows);
+    } catch (error) {
+      console.error('List report branches error:', error);
+      return res.status(500).json({ error: 'Failed to list report branches' });
+    }
+  }
+);
 
 function buildDateSeries(fromDate, toDate) {
   const dates = [];
@@ -32,7 +86,7 @@ function normalizeDateKey(value) {
 
 router.get(
   '/branches/:branchId/daily',
-  hasPermission(['VIEW_REPORTS']),
+  hasAnyPermission(['VIEW_DAILY_REPORTS', 'VIEW_REPORTS']),
   [
     param('branchId').isUUID(),
     query('date').isISO8601({ strict: true, strictSeparator: true }),
@@ -101,6 +155,30 @@ router.get(
         [branchId, date]
       );
 
+      // Calculate beer cost using per-game override if present, otherwise fall back to branch effective price
+      const [[beerCostRow]] = await pool.query(
+        `SELECT COALESCE(SUM(
+            w.beer_quantity * COALESCE(g.beer_price,
+              (
+                SELECT bp.price FROM branch_beer_prices bp
+                WHERE bp.branch_id = g.branch_id
+                  AND bp.effective_from <= w.created_at
+                  AND (bp.effective_to IS NULL OR bp.effective_to > w.created_at)
+                ORDER BY bp.effective_from DESC
+                LIMIT 1
+              ),
+              90
+            )
+          ), 0) AS total
+         FROM winners w
+         JOIN games g ON g.id = w.game_id
+         WHERE g.branch_id = ?
+           AND DATE(w.created_at) = ?`,
+        [branchId, date]
+      );
+
+      const beerCost = Number(beerCostRow.total || 0);
+
       const [[walletDeductionsRow]] = await pool.query(
         `SELECT COALESCE(SUM(gc.charge_amount), 0) AS total
          FROM game_charges gc
@@ -110,14 +188,20 @@ router.get(
         [branchId, date]
       );
 
+      const salesRevenueVal = Number(salesRevenueRow.total || 0);
+      const beersDistributedVal = Number(beersDistributedRow.total || 0);
+      const operatorProfit = salesRevenueVal - beerCost;
+
       return res.json({
         date,
         branchId,
         gamesPlayed: Number(gamesPlayedRow.count || 0),
         cardsSold: Number(cardsSoldRow.count || 0),
-        salesRevenue: Number(salesRevenueRow.total || 0),
-        beersDistributed: Number(beersDistributedRow.total || 0),
+        salesRevenue: salesRevenueVal,
+        beersDistributed: beersDistributedVal,
         walletDeductions: Number(walletDeductionsRow.total || 0),
+        beerCost: beerCost,
+        operatorProfit: operatorProfit,
       });
     } catch (error) {
       console.error('Branch daily report error:', error);
@@ -128,7 +212,7 @@ router.get(
 
 router.get(
   '/companies/:companyId/wallet',
-  hasPermission(['VIEW_REPORTS']),
+  hasAnyPermission(['VIEW_DAILY_REPORTS', 'VIEW_REPORTS']),
   [
     param('companyId').isUUID(),
     query('from').isISO8601({ strict: true, strictSeparator: true }),

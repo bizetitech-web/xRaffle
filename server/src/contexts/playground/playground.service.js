@@ -1,9 +1,11 @@
 import { AppError } from '../../core/errors/AppError.js';
 import { ErrorCodes } from '../../core/errors/errorCodes.js';
 import { withTransaction } from '../../core/db/transaction.js';
+import { writeAuditLog } from '../../core/audit/auditLog.js';
 import pool from '../../../config/database.js';
 import { playgroundRepository } from './playground.repository.js';
 import { realtimeGateway } from '../realtime/realtime.gateway.js';
+import { emitRealtimeEventWithOutbox } from '../realtime/realtime.outbox.js';
 import { RealtimeEventContracts } from '../realtime/realtime.events.js';
 
 const assertScope = (req, context) => {
@@ -22,37 +24,57 @@ const assertVersion = (expectedVersion, currentVersion) => {
   }
 };
 
-const emitDrawAndWinnerEvents = ({ draw, sessionId, companyId }) => {
-  realtimeGateway.emitDrawEvent({
+const emitDrawAndWinnerEvents = async ({ connection, draw, sessionId, companyId }) => {
+  const drawPayload = {
+    drawId: draw.drawId,
+    drawPosition: draw.drawPosition,
+    calledNumber: draw.calledNumber,
+    beerQuantity: draw.beerQuantity,
+    winnerCount: Array.isArray(draw.winners) ? draw.winners.length : 0,
+    winners: draw.winners || [],
+    version: draw.version,
+  };
+
+  await emitRealtimeEventWithOutbox({
+    connection,
+    eventGroup: 'draw',
     event: RealtimeEventContracts.draw.next,
     sessionId,
     companyId,
-    payload: {
-      drawId: draw.drawId,
-      drawPosition: draw.drawPosition,
-      calledNumber: draw.calledNumber,
-      beerQuantity: draw.beerQuantity,
-      winnerCount: Array.isArray(draw.winners) ? draw.winners.length : 0,
-      winners: draw.winners || [],
-      version: draw.version,
-    },
+    payload: drawPayload,
+    emit: () => realtimeGateway.emitDrawEvent({
+      event: RealtimeEventContracts.draw.next,
+      sessionId,
+      companyId,
+      payload: drawPayload,
+    }),
   });
 
   for (const winner of draw.winners || []) {
-    realtimeGateway.emitWinnerEvent({
+    const winnerPayload = {
+      drawId: draw.drawId,
+      drawPosition: draw.drawPosition,
+      calledNumber: draw.calledNumber,
+      winnerId: winner.winnerId,
+      cardId: winner.cardId,
+      cardNumber: winner.cardNumber,
+      beerQuantity: draw.beerQuantity,
+      version: draw.version,
+    };
+
+    await emitRealtimeEventWithOutbox({
+      connection,
+      eventGroup: 'winner',
       event: RealtimeEventContracts.winner.created,
       sessionId,
       companyId,
-      payload: {
-        drawId: draw.drawId,
-        drawPosition: draw.drawPosition,
-        calledNumber: draw.calledNumber,
-        winnerId: winner.winnerId,
-        cardId: winner.cardId,
-        cardNumber: winner.cardNumber,
-        beerQuantity: draw.beerQuantity,
-        version: draw.version,
-      },
+      payload: winnerPayload,
+      emit: () => realtimeGateway.emitWinnerEvent({
+        event: RealtimeEventContracts.winner.created,
+        sessionId,
+        companyId,
+        payload: winnerPayload,
+      }),
     });
   }
 };
@@ -88,11 +110,16 @@ export class PlaygroundService {
 
       const draws = await playgroundRepository.getDrawRows(connection, req.params.sessionId, { forUpdate: true });
       const drawPosition = draws.length + 1;
-      const prize = await playgroundRepository.getNextPrize(connection, req.params.sessionId, drawPosition);
+      const prize = await playgroundRepository.getNextPrize(connection, req.params.sessionId, drawPosition, { forUpdate: true });
 
       if (!prize) {
+        // include prizeCount and currentRound to help clients decide UI state
+        const prizeCount = await playgroundRepository.getPrizeCount(connection, req.params.sessionId);
+        const currentRound = draws.length;
         throw AppError.conflict('All configured draw positions have been completed', ErrorCodes.DRAW_POOL_EXHAUSTED, {
           drawPosition,
+          prizeCount,
+          currentRound,
         });
       }
 
@@ -136,11 +163,46 @@ export class PlaygroundService {
         version: refreshed.version,
       };
 
-      emitDrawAndWinnerEvents({
+      await emitDrawAndWinnerEvents({
+        connection,
         draw: result,
         sessionId: req.params.sessionId,
         companyId: session.companyId,
       });
+
+      await writeAuditLog(connection, {
+        companyId: session.companyId || null,
+        userId: req.user?.sub || null,
+        action: 'DRAW_NEXT',
+        tableName: 'draws',
+        entityType: 'DRAW',
+        recordId: result.drawId,
+        details: {
+          gameId: req.params.sessionId,
+          sessionId: req.params.sessionId,
+          drawPosition: result.drawPosition,
+          calledNumber: result.calledNumber,
+          winnerCount: Array.isArray(result.winners) ? result.winners.length : 0,
+        },
+      });
+
+      for (const winner of result.winners || []) {
+        await writeAuditLog(connection, {
+          companyId: session.companyId || null,
+          userId: req.user?.sub || null,
+          action: 'WINNER_CREATED',
+          tableName: 'game_winners',
+          entityType: 'WINNER',
+          recordId: winner.winnerId,
+          details: {
+            gameId: req.params.sessionId,
+            sessionId: req.params.sessionId,
+            drawId: result.drawId,
+            cardId: winner.cardId,
+            cardNumber: winner.cardNumber,
+          },
+        });
+      }
 
       return result;
     });
@@ -223,16 +285,40 @@ export class PlaygroundService {
         claimedBy: req.user.sub,
       });
 
-      realtimeGateway.emitWinnerEvent({
+      const winnerClaimedPayload = {
+        winnerId: result.winnerId,
+        sessionId: result.sessionId,
+        claimed: result.claimed,
+        claimedAt: result.claimedAt,
+        version: result.version,
+      };
+
+      await emitRealtimeEventWithOutbox({
+        connection,
+        eventGroup: 'winner',
         event: RealtimeEventContracts.winner.claimed,
         sessionId: winner.sessionId,
         companyId: winner.companyId,
-        payload: {
-          winnerId: result.winnerId,
+        payload: winnerClaimedPayload,
+        emit: () => realtimeGateway.emitWinnerEvent({
+          event: RealtimeEventContracts.winner.claimed,
+          sessionId: winner.sessionId,
+          companyId: winner.companyId,
+          payload: winnerClaimedPayload,
+        }),
+      });
+
+      await writeAuditLog(connection, {
+        companyId: winner.companyId || null,
+        userId: req.user?.sub || null,
+        action: 'WINNER_CLAIMED',
+        tableName: 'game_winners',
+        entityType: 'WINNER',
+        recordId: result.winnerId,
+        details: {
+          gameId: result.sessionId,
           sessionId: result.sessionId,
           claimed: result.claimed,
-          claimedAt: result.claimedAt,
-          version: result.version,
         },
       });
 

@@ -26,6 +26,7 @@ export const login = async (req, res) => {
       `SELECT 
         u.id,
         u.hotel_company_id,
+        u.branch_id,
         u.name,
         u.email,
         u.password_hash,
@@ -35,11 +36,14 @@ export const login = async (req, res) => {
         o.name AS hotel_company_name,
         o.email AS hotel_company_email,
         o.phone AS hotel_company_phone,
+        hb.name AS branch_name,
+        hb.branch_code,
         ur.role_id,
         r.name AS role_name,
         r.level AS role_level
        FROM users u
        LEFT JOIN hotel_companies o ON o.id = u.hotel_company_id
+       LEFT JOIN hotel_branches hb ON hb.id = u.branch_id
        LEFT JOIN user_roles ur ON ur.user_id = u.id
        LEFT JOIN roles r ON r.id = ur.role_id
        WHERE u.email = ?
@@ -116,6 +120,14 @@ export const login = async (req, res) => {
           name: user.hotel_company_name,
           code: null
         },
+        branchId: user.branch_id,
+        branch: user.branch_id
+          ? {
+              id: user.branch_id,
+              name: user.branch_name,
+              code: user.branch_code,
+            }
+          : null,
         permissions: permissions.map(p => p.name), // Optional: include basic permissions
         lastLogin: new Date().toISOString(),
       },
@@ -140,6 +152,7 @@ export const getProfile = async (req, res) => {
       `SELECT 
         u.id,
         u.hotel_company_id,
+        u.branch_id,
         u.name,
         u.email,
         u.password_hash,
@@ -147,11 +160,14 @@ export const getProfile = async (req, res) => {
         u.is_active,
         u.created_at,
         o.name AS hotel_company_name,
+        hb.name AS branch_name,
+        hb.branch_code,
         ur.role_id,
         r.name AS role_name,
         r.level AS role_level
        FROM users u
        LEFT JOIN hotel_companies o ON o.id = u.hotel_company_id
+       LEFT JOIN hotel_branches hb ON hb.id = u.branch_id
        LEFT JOIN user_roles ur ON ur.user_id = u.id
        LEFT JOIN roles r ON r.id = ur.role_id
        WHERE u.id = ?
@@ -200,6 +216,14 @@ export const getProfile = async (req, res) => {
           country: null,
           postalCode: null
         },
+        branchId: user.branch_id,
+        branch: user.branch_id
+          ? {
+              id: user.branch_id,
+              name: user.branch_name,
+              code: user.branch_code,
+            }
+          : null,
         permissions: permissions.map(p => p.name),
         isActive: user.is_active,
         lastLogin: user.last_login,

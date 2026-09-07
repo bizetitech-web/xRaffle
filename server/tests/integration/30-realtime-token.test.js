@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
-import { apiRequest, loginAsAdmin } from './helpers/apiClient.js';
+import { apiRequest, apiRequestWithIdempotency, buildIdempotencyKey, loginAsAdmin } from './helpers/apiClient.js';
 
 const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_PASSWORD);
 
@@ -38,14 +38,12 @@ test('realtime token endpoint returns socket token for authenticated user', { sk
 
 test('realtime token endpoint replays same response for repeated Idempotency-Key', { skip: !hasCreds }, async () => {
   const { token } = await loginAsAdmin();
-  const idempotencyKey = `slice6-replay-${Date.now()}`;
+  const idempotencyKey = buildIdempotencyKey('slice6-replay');
 
-  const first = await apiRequest('/realtime/token', {
+  const first = await apiRequestWithIdempotency('/realtime/token', {
     method: 'POST',
     token,
-    headers: {
-      'Idempotency-Key': idempotencyKey,
-    },
+    idempotencyKey,
     body: {},
   });
 
@@ -53,12 +51,10 @@ test('realtime token endpoint replays same response for repeated Idempotency-Key
   assert.ok(first.json?.socketToken, 'Expected socketToken in initial response payload');
   assert.equal(first.response.headers.get('x-idempotency-replayed'), 'false');
 
-  const second = await apiRequest('/realtime/token', {
+  const second = await apiRequestWithIdempotency('/realtime/token', {
     method: 'POST',
     token,
-    headers: {
-      'Idempotency-Key': idempotencyKey,
-    },
+    idempotencyKey,
     body: {},
   });
 

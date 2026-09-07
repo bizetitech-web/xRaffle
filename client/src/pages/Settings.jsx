@@ -164,10 +164,10 @@ const Settings = () => {
               : { color: 'text.secondary' },
           }}
         >
-          <Tab icon={<PersonIcon />} label="Profile" aria-label="Profile" iconPosition="start" />
+          <Tab icon={<PersonIcon />} label="Settings" aria-label="Settings" iconPosition="start" />
           <Tab icon={<BusinessIcon />} label="Hotel" aria-label="Hotel" iconPosition="start" />
           <Tab icon={<NotificationsIcon />} label="Notifications" aria-label="Notifications" iconPosition="start" />
-          <Tab icon={<SecurityIcon />} label="Security" aria-label="Security" iconPosition="start" />
+          <Tab icon={<SecurityIcon />} label="Password" aria-label="Password" iconPosition="start" />
           <Tab icon={<PaletteIcon />} label="Appearance" aria-label="Appearance" iconPosition="start" />
         </Tabs>
 
@@ -358,7 +358,7 @@ const Settings = () => {
           </Box>
         </TabPanel>
 
-        {/* Security Tab */}
+        {/* Password Tab */}
         <TabPanel value={tabValue} index={3}>
           <Box sx={{ p: 3 }}>
             <Typography variant="h6" sx={{ color: 'text.primary', mb: 3 }}>

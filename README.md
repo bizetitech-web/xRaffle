@@ -8,6 +8,7 @@ A template-ready fullstack starter focused on authentication, organizations, use
 
 - Phase 3 cleanup and template hardening are complete.
 - Phase 1 context contracts are complete and enforced in CI.
+- Phase 6 realtime reliability hardening is complete (transactional realtime outbox with retry/backoff, dead-letter, and metrics).
 - The codebase is prepared for public/internal template use.
 - Historical phase execution documents are available under docs/user-management-template and have an archive plan.
 
@@ -78,7 +79,24 @@ npm run seed:super-admin -- --email admin@example.com --password ChangeMe123! --
 npm run verify:db
 npm run test:integration
 npm run test:integration:contracts
+npm run realtime:outbox:drain
 ```
+
+Realtime outbox controls (server env)
+
+- REALTIME_OUTBOX_DRAIN_INTERVAL_SECONDS (default 5)
+- REALTIME_OUTBOX_BATCH_SIZE (default 100)
+- REALTIME_OUTBOX_RETRY_BASE_SECONDS (default 10)
+- REALTIME_OUTBOX_RETRY_MAX_SECONDS (default 300)
+- REALTIME_OUTBOX_DEAD_LETTER_ATTEMPTS (default 10)
+
+Operational metrics exposed via /metrics
+
+- xraffle_realtime_outbox_pending_count
+- xraffle_realtime_outbox_failed_count
+- xraffle_realtime_outbox_dead_letter_count
+- xraffle_realtime_outbox_avg_publish_latency_seconds
+- xraffle_realtime_outbox_failure_rate
 
 DB-backed integration contracts lane requires:
 
@@ -94,6 +112,15 @@ From client folder:
 npm run e2e:install
 npm run e2e
 ```
+
+E2E testing notes
+
+- Set `E2E_BASE_URL` to your running dev client URL (defaults to `http://localhost:3001` if unset).
+- Set `E2E_API_BASE_URL` to your running API base (defaults to `http://localhost:5000/api`).
+- Provide `E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` to run Playwright smoke tests that require auth.
+- The tests use `apiLogin()` to persist a JWT to `localStorage` before navigation for deterministic UI flows.
+
+CI: Ensure the runner can reach both the client and server URLs and secrets are set as `E2E_*` env vars.
 
 ## Project Layout
 

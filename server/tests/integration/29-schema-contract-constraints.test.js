@@ -50,6 +50,19 @@ async function getForeignKeys(connection, schemaName, tableName) {
   return rows;
 }
 
+async function getCheckConstraintNames(connection, schemaName, tableName) {
+  const [rows] = await connection.query(
+    `SELECT CONSTRAINT_NAME AS constraintName
+     FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = ?
+       AND TABLE_NAME = ?
+       AND CONSTRAINT_TYPE = 'CHECK'`,
+    [schemaName, tableName]
+  );
+
+  return new Set(rows.map((row) => row.constraintName));
+}
+
 test('runtime schema contract for unique and foreign key constraints remains compatible', { skip: !hasDbConfig }, async () => {
   const connection = await mysql.createConnection({
     host: process.env.DB_HOST,
@@ -95,6 +108,12 @@ test('runtime schema contract for unique and foreign key constraints remains com
 
     const winnersFks = await getForeignKeys(connection, schemaName, 'winners');
     const salesFks = await getForeignKeys(connection, schemaName, 'game_sales');
+    const walletTopupChecks = await getCheckConstraintNames(connection, schemaName, 'wallet_topups');
+    const walletTransactionChecks = await getCheckConstraintNames(connection, schemaName, 'wallet_transactions');
+    const gameChargeChecks = await getCheckConstraintNames(connection, schemaName, 'game_charges');
+    const gameSalesChecks = await getCheckConstraintNames(connection, schemaName, 'game_sales');
+    const gamePrizeChecks = await getCheckConstraintNames(connection, schemaName, 'game_prizes');
+    const drawChecks = await getCheckConstraintNames(connection, schemaName, 'draws');
 
     const expectedWinnerFkPairs = [
       ['game_id', 'games', 'id'],
@@ -130,6 +149,36 @@ test('runtime schema contract for unique and foreign key constraints remains com
         `Expected FK game_sales.${columnName} -> ${referencedTable}.${referencedColumn}`
       );
     }
+
+    assert.ok(
+      walletTopupChecks.has('chk_wallet_topups_amount_positive'),
+      'Expected CHECK chk_wallet_topups_amount_positive on wallet_topups'
+    );
+
+    assert.ok(
+      walletTransactionChecks.has('chk_wallet_transactions_amount_positive'),
+      'Expected CHECK chk_wallet_transactions_amount_positive on wallet_transactions'
+    );
+
+    assert.ok(
+      gameChargeChecks.has('chk_game_charges_amount_non_negative'),
+      'Expected CHECK chk_game_charges_amount_non_negative on game_charges'
+    );
+
+    assert.ok(
+      gameSalesChecks.has('chk_game_sales_sold_price_positive'),
+      'Expected CHECK chk_game_sales_sold_price_positive on game_sales'
+    );
+
+    assert.ok(
+      gamePrizeChecks.has('chk_game_prizes_beer_quantity_positive'),
+      'Expected CHECK chk_game_prizes_beer_quantity_positive on game_prizes'
+    );
+
+    assert.ok(
+      drawChecks.has('chk_draws_beer_quantity_positive'),
+      'Expected CHECK chk_draws_beer_quantity_positive on draws'
+    );
   } finally {
     await connection.end();
   }

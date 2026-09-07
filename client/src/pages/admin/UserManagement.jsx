@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Paper,
@@ -40,6 +40,8 @@ import { DataGrid } from '@mui/x-data-grid';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
+import { getUsers, createUser, updateUser, updateUserStatus } from '../../services/api';
+import { useSnackbar } from 'notistack';
 
 const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
 
@@ -49,6 +51,7 @@ const UserManagement = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [openDialog, setOpenDialog] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [formData, setFormData] = useState({
@@ -70,12 +73,14 @@ const UserManagement = () => {
   const [formErrors, setFormErrors] = useState({});
   const { user: currentUser, isSuperAdmin } = useAuth();
 
+
   useEffect(() => {
-    fetchUsers();
     fetchRoles();
     if (isSuperAdmin()) {
       fetchOrganizations();
+      fetchUsers(); // Fetch all users for super admin
     } else {
+      fetchUsers();
       fetchBranches(currentUser?.organization?.id || '');
     }
   }, []);
@@ -95,7 +100,11 @@ const UserManagement = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE}/admin/users`);
+      let companyId = null;
+      if (!isSuperAdmin()) {
+        companyId = currentUser?.organization?.id || '';
+      }
+      const response = await getUsers(companyId);
       setUsers(response.data);
       setError(null);
     } catch (err) {
@@ -125,8 +134,12 @@ const UserManagement = () => {
   };
 
   const fetchBranches = async (companyId) => {
+    if (!companyId) {
+      setBranches([]);
+      return;
+    }
     try {
-      const query = companyId ? `?companyId=${companyId}` : '';
+      const query = `?companyId=${companyId}`;
       const response = await axios.get(`${API_BASE}/admin/hotel_branches${query}`);
       setBranches(response.data || []);
     } catch (err) {
@@ -136,6 +149,8 @@ const UserManagement = () => {
   };
 
   const handleOpenDialog = (user = null) => {
+    setError(null);
+    setSuccess(null);
     if (user) {
       setSelectedUser(user);
       setFormData({
@@ -170,6 +185,9 @@ const UserManagement = () => {
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setSelectedUser(null);
+    setError(null);
+    setSuccess(null);
+    setFormErrors({});
   };
 
   const handleChange = (e) => {
@@ -232,6 +250,8 @@ const UserManagement = () => {
     return errors;
   };
 
+  const [submitting, setSubmitting] = useState(false);
+  const { enqueueSnackbar } = useSnackbar();
   const handleSubmit = async () => {
     // Validate form
     const errors = validateForm();
@@ -239,7 +259,7 @@ const UserManagement = () => {
       setFormErrors(errors);
       return;
     }
-
+    setSubmitting(true);
     try {
       // Prepare payload
       const payload = {
@@ -251,58 +271,64 @@ const UserManagement = () => {
         isActive: formData.isActive,
         branchId: formData.branchId || null,
       };
-
       // Only include hotelCompanyId for super admin or if explicitly set
       if (isSuperAdmin() && formData.hotelCompanyId) {
         payload.hotelCompanyId = formData.hotelCompanyId;
       }
-
       // Only include password for new users or if changed
       if (!selectedUser && formData.password) {
         payload.password = formData.password;
       } else if (selectedUser && formData.password) {
         payload.password = formData.password; // Allow password change
       }
-
       if (selectedUser) {
-        // Update user
-        await axios.put(`${API_BASE}/admin/users/${selectedUser.id}`, payload);
-        setSuccess('User updated successfully');
+        await updateUser(selectedUser.id, payload);
+        enqueueSnackbar('User updated successfully', { variant: 'success' });
       } else {
-        // Create user
-        await axios.post(`${API_BASE}/admin/users`, payload);
-        setSuccess('User created successfully');
+        await createUser(payload);
+        enqueueSnackbar('User created successfully', { variant: 'success' });
       }
       fetchUsers();
       handleCloseDialog();
     } catch (err) {
-      setError(err.response?.data?.error || 'Operation failed');
+      const msg = err.response?.data?.error || err.message || 'Operation failed';
+      setError(msg);
+      enqueueSnackbar(msg, { variant: 'error' });
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleToggleStatus = async (userId, currentStatus) => {
     try {
-      await axios.put(`${API_BASE}/admin/users/${userId}/status`, {
-        isActive: !currentStatus
-      });
-      setSuccess(`User ${!currentStatus ? 'activated' : 'deactivated'} successfully`);
+      await updateUserStatus(userId, !currentStatus ? 'active' : 'inactive');
+      const msg = `User ${!currentStatus ? 'activated' : 'deactivated'} successfully`;
+      enqueueSnackbar(msg, { variant: 'success' });
       fetchUsers();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update user status');
+      const msg = err.response?.data?.error || err.message || 'Failed to update user status';
+      setError(msg);
+      enqueueSnackbar(msg, { variant: 'error' });
     }
   };
 
+  const [deletingId, setDeletingId] = useState(null);
   const handleDeleteUser = async (userId) => {
     if (!window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
       return;
     }
-    
+    setDeletingId(userId);
     try {
       await axios.delete(`${API_BASE}/admin/users/${userId}`);
-      setSuccess('User deleted successfully');
+      const msg = 'User deleted successfully';
+      enqueueSnackbar(msg, { variant: 'success' });
       fetchUsers();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete user');
+      const msg = err.response?.data?.error || 'Failed to delete user';
+      setError(msg);
+      enqueueSnackbar(msg, { variant: 'error' });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -319,11 +345,16 @@ const UserManagement = () => {
             bgcolor: params.row.is_active ? '#3b82f6' : '#6b7280',
             fontSize: '0.9rem'
           }}>
-            {params.row.first_name?.[0]}{params.row.last_name?.[0]}
+            {(() => {
+              const a = params.row.first_name || params.row.name || params.row.email || '';
+              const b = params.row.last_name || '';
+              const initials = ((a[0] || '') + (b[0] || '')).toUpperCase();
+              return initials || (params.row.email || '').slice(0,2).toUpperCase();
+            })()}
           </Avatar>
           <Box>
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              {params.row.first_name} {params.row.last_name}
+              {params.row.first_name || params.row.name || ''} {params.row.last_name || ''}
             </Typography>
             <Typography variant="caption" sx={{ color: '#aaaaaa' }}>
               {params.row.email}
@@ -428,8 +459,9 @@ const UserManagement = () => {
               onClick={() => handleDeleteUser(params.row.id)}
               aria-label={`delete-user-${params.row.id}`}
               sx={{ color: '#f44336' }}
+              disabled={deletingId === params.row.id}
             >
-              <DeleteIcon fontSize="small" />
+              {deletingId === params.row.id ? <CircularProgress size={18} /> : <DeleteIcon fontSize="small" />}
             </IconButton>
           )}
         </Box>
@@ -437,21 +469,28 @@ const UserManagement = () => {
     },
   ];
 
-  const filteredUsers = users.filter(user => 
-    user.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.hotel_company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.branch_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Debounce search input for smoother UX
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim().toLowerCase()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
-  if (loading && users.length === 0) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
+  const filteredUsers = useMemo(() => {
+    if (!debouncedSearch) return users;
+    return users.filter(user => {
+      const s = debouncedSearch;
+      return (
+        (user.first_name || '').toLowerCase().includes(s) ||
+        (user.last_name || '').toLowerCase().includes(s) ||
+        (user.email || '').toLowerCase().includes(s) ||
+        (user.hotel_company_name || '').toLowerCase().includes(s) ||
+        (user.branch_name || '').toLowerCase().includes(s)
+      );
+    });
+  }, [users, debouncedSearch]);
+
+
+
 
   return (
     <Box>
@@ -475,7 +514,8 @@ const UserManagement = () => {
           sx={{ 
             bgcolor: '#FF8A00',
             '&:hover': { bgcolor: '#CC6E00' }
-          }}
+            }}
+            disabled={loading}
         >
           {isMobile ? 'User' : 'Add User'}
         </Button>
@@ -525,15 +565,6 @@ const UserManagement = () => {
           {error}
         </Alert>
       )}
-      {success && (
-        <Alert 
-          severity="success" 
-          sx={{ mb: 3 }}
-          onClose={() => setSuccess(null)}
-        >
-          {success}
-        </Alert>
-      )}
 
       {/* Search Bar */}
       <Paper sx={{ bgcolor: 'background.paper', p: 2, mb: 3 }}>
@@ -566,30 +597,44 @@ const UserManagement = () => {
       </Paper>
 
       {/* Users Table */}
-      <Paper sx={{ bgcolor: 'background.paper', height: 500 }}>
-        <DataGrid
-          rows={filteredUsers}
-          columns={columns}
-          pageSize={10}
-          rowsPerPageOptions={[10, 25, 50]}
-          disableSelectionOnClick
-          getRowId={(row) => row.id}
-          sx={{
-            border: 'none',
-            color: 'text.primary',
-            '& .MuiDataGrid-cell': {
-              borderBottom: `1px solid ${muiTheme.palette.divider}`,
-            },
-            '& .MuiDataGrid-columnHeaders': {
-              backgroundColor: 'background.default',
+      <Paper sx={{ bgcolor: 'background.paper', height: 500, position: 'relative' }}>
+        {loading && (
+          <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2, bgcolor: 'rgba(255,255,255,0.6)' }}>
+            <CircularProgress />
+          </Box>
+        )}
+
+        {(!loading && filteredUsers.length === 0) ? (
+          <Box sx={{ height: 500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+            <Typography variant="h6" sx={{ color: 'text.secondary' }}>No users found</Typography>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>Create a user to get started.</Typography>
+            <Button variant="contained" onClick={() => handleOpenDialog()} startIcon={<AddIcon />} sx={{ bgcolor: '#FF8A00', '&:hover': { bgcolor: '#CC6E00' } }}>Add User</Button>
+          </Box>
+        ) : (
+          <DataGrid
+            rows={filteredUsers}
+            columns={columns}
+            pageSize={10}
+            rowsPerPageOptions={[10, 25, 50]}
+            disableSelectionOnClick
+            getRowId={(row) => row.id}
+            sx={{
+              border: 'none',
               color: 'text.primary',
-              borderBottom: `1px solid ${muiTheme.palette.divider}`,
-            },
-            '& .MuiDataGrid-footerContainer': {
-              borderTop: `1px solid ${muiTheme.palette.divider}`,
-            },
-          }}
-        />
+              '& .MuiDataGrid-cell': {
+                borderBottom: `1px solid ${muiTheme.palette.divider}`,
+              },
+              '& .MuiDataGrid-columnHeaders': {
+                backgroundColor: 'background.default',
+                color: 'text.primary',
+                borderBottom: `1px solid ${muiTheme.palette.divider}`,
+              },
+              '& .MuiDataGrid-footerContainer': {
+                borderTop: `1px solid ${muiTheme.palette.divider}`,
+              },
+            }}
+          />
+        )}
       </Paper>
 
       {/* User Dialog */}
@@ -810,8 +855,9 @@ const UserManagement = () => {
               bgcolor: '#FF8A00',
               '&:hover': { bgcolor: '#CC6E00' }
             }}
+            disabled={submitting}
           >
-            {selectedUser ? 'Update' : 'Create'} User
+            {submitting ? (selectedUser ? 'Updating...' : 'Creating...') : (selectedUser ? 'Update' : 'Create')} User
           </Button>
         </DialogActions>
       </Dialog>

@@ -4,6 +4,7 @@ import { authenticate } from '../../../middleware/auth.js';
 import { canAccessOrganization } from '../../../middleware/rbac.js';
 import { requirePermissions } from '../../core/policy/permissionPolicy.js';
 import { asyncHandler } from '../../core/http/asyncHandler.js';
+import { drawWriteRateLimiter } from '../../core/http/rateLimiters.js';
 import { AppError } from '../../core/errors/AppError.js';
 import { playgroundService } from './playground.service.js';
 import {
@@ -33,13 +34,13 @@ router.get('/game-sessions/:sessionId/playground/pool', requirePermissions(['VIE
   res.json(data);
 }));
 
-router.post('/game-sessions/:sessionId/playground/draw/next', requirePermissions(['RUN_DRAWS']), drawNextValidator, asyncHandler(async (req, res) => {
+router.post('/game-sessions/:sessionId/playground/draw/next', requirePermissions(['RUN_DRAWS']), drawWriteRateLimiter, drawNextValidator, asyncHandler(async (req, res) => {
   assertValid(req);
   const data = await playgroundService.drawNext(req);
   res.status(201).json(data);
 }));
 
-router.post('/game-sessions/:sessionId/playground/auto-draw', requirePermissions(['RUN_DRAWS']), autoDrawValidator, asyncHandler(async (req, res) => {
+router.post('/game-sessions/:sessionId/playground/auto-draw', requirePermissions(['RUN_DRAWS']), drawWriteRateLimiter, autoDrawValidator, asyncHandler(async (req, res) => {
   assertValid(req);
   const data = await playgroundService.setAutoDraw(req);
   res.json(data);

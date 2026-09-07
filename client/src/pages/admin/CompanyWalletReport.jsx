@@ -5,6 +5,7 @@ import {
   Card,
   CardContent,
   Chip,
+  Divider,
   Grid,
   MenuItem,
   Paper,
@@ -35,6 +36,8 @@ const CompanyWalletReport = () => {
   const [report, setReport] = useState(null);
 
   const canViewGlobal = hasPermission('VIEW_GLOBAL_REPORTS');
+  const normalizedRoleName = (user?.role?.name || '').toLowerCase().replace(/[\s_-]/g, '');
+  const isOperator = user?.role?.level === 3 || normalizedRoleName === 'operator';
 
   const selectedCompany = useMemo(
     () => companies.find((company) => company.id === selectedCompanyId),
@@ -162,7 +165,20 @@ const CompanyWalletReport = () => {
         onRefresh={handleRefresh}
         refreshDisabled={loadingCompanies || !selectedCompanyId}
         rightContent={
-          selectedCompany ? <Chip icon={<BusinessIcon />} label={selectedCompany.name} /> : null
+          <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+            {selectedCompany ? <Chip icon={<BusinessIcon />} label={selectedCompany.name} /> : null}
+            {isOperator && selectedCompany ? (
+              <>
+                <Divider orientation="vertical" flexItem sx={{ display: { xs: 'none', sm: 'block' } }} />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color="primary"
+                  label={`Operator scope: ${selectedCompany.name}`}
+                />
+              </>
+            ) : null}
+          </Stack>
         }
         background="linear-gradient(120deg, rgba(2,132,199,0.14) 0%, rgba(22,163,74,0.12) 55%, rgba(217,119,6,0.12) 100%)"
       >

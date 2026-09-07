@@ -27,6 +27,7 @@ import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
+  Save as SaveIcon,
   Business as BusinessIcon,
   Search as SearchIcon,
   Refresh as RefreshIcon,
@@ -38,6 +39,7 @@ import { DataGrid } from '@mui/x-data-grid';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
+import { getBranches, createBranch, updateBranch, deleteBranch, setBranchBeerPrice } from '../../services/api';
 
 const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
 
@@ -65,6 +67,8 @@ const BranchManagement = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [formData, setFormData] = useState(defaultFormData);
+  const [branchBeerPriceInputs, setBranchBeerPriceInputs] = useState({});
+  const [savingBeerBranchId, setSavingBeerBranchId] = useState('');
 
   useEffect(() => {
     fetchBranches();
@@ -76,11 +80,12 @@ const BranchManagement = () => {
   const fetchBranches = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE}/admin/hotel_branches`);
+      const companyId = isSuperAdmin() ? formData.companyId : (user?.organization?.id || '');
+      const response = await getBranches(companyId);
       setBranches(response.data || []);
       setError(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to fetch branches');
+      setError(err.response?.data?.error || err.message || 'Failed to fetch branches');
     } finally {
       setLoading(false);
     }
@@ -97,7 +102,7 @@ const BranchManagement = () => {
 
   const handleOpenDialog = (branch = null) => {
     setError(null);
-
+    setSuccess(null);
     if (branch) {
       setSelectedBranch(branch);
       setFormData({
@@ -116,13 +121,14 @@ const BranchManagement = () => {
         companyId: isSuperAdmin() ? '' : (user?.organization?.id || ''),
       });
     }
-
     setOpenDialog(true);
   };
 
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setSelectedBranch(null);
+    setError(null);
+    setSuccess(null);
   };
 
   const handleChange = (e) => {
@@ -130,47 +136,62 @@ const BranchManagement = () => {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  const [submitting, setSubmitting] = useState(false);
   const handleSubmit = async () => {
+    // Validate required fields
+    if (!formData.name.trim()) {
+      setError('Branch name is required');
+      return;
+    }
+    if (!formData.branchCode.trim()) {
+      setError('Branch code is required');
+      return;
+    }
+    if (isSuperAdmin() && !formData.companyId) {
+      setError('Hotel is required');
+      return;
+    }
+    setSubmitting(true);
     try {
       const payload = {
         name: formData.name,
-        branchCode: formData.branchCode,
+        branch_code: formData.branchCode,
         city: formData.city,
         address: formData.address,
         phone: formData.phone,
         status: formData.status,
+        company_id: isSuperAdmin() ? formData.companyId : (user?.organization?.id || ''),
       };
-
-      if (isSuperAdmin() && formData.companyId) {
-        payload.companyId = formData.companyId;
-      }
-
       if (selectedBranch) {
-        await axios.put(`${API_BASE}/admin/hotel_branches/${selectedBranch.id}`, payload);
+        await updateBranch(selectedBranch.id, payload);
         setSuccess('Branch updated successfully');
       } else {
-        await axios.post(`${API_BASE}/admin/hotel_branches`, payload);
+        await createBranch(payload);
         setSuccess('Branch created successfully');
       }
-
       handleCloseDialog();
       fetchBranches();
     } catch (err) {
-      setError(err.response?.data?.error || 'Operation failed');
+      setError(err.response?.data?.error || err.message || 'Operation failed');
+    } finally {
+      setSubmitting(false);
     }
   };
 
+  const [deletingId, setDeletingId] = useState(null);
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this branch?')) {
       return;
     }
-
+    setDeletingId(id);
     try {
-      await axios.delete(`${API_BASE}/admin/hotel_branches/${id}`);
+      await deleteBranch(id);
       setSuccess('Branch deleted successfully');
       fetchBranches();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete branch');
+      setError(err.response?.data?.error || err.message || 'Failed to delete branch');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -187,6 +208,31 @@ const BranchManagement = () => {
       branch.city?.toLowerCase().includes(term)
     );
   }, [branches, searchTerm]);
+
+  const handleBranchBeerPriceInput = (branchId, value) => {
+    setBranchBeerPriceInputs((prev) => ({ ...prev, [branchId]: value }));
+  };
+
+  const handleSaveBranchBeerPrice = async (branch) => {
+    const raw = branchBeerPriceInputs[branch.id];
+    const price = raw === '' || raw === undefined || raw === null ? 90 : Number(raw);
+    if (!Number.isFinite(price) || price <= 0) {
+      setError('Enter a valid beer price greater than 0');
+      return;
+    }
+
+    setSavingBeerBranchId(branch.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await setBranchBeerPrice(branch.id, price);
+      setSuccess(`Beer price for ${branch.name} set to ${price} ETB`);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to set branch beer price');
+    } finally {
+      setSavingBeerBranchId('');
+    }
+  };
 
   const columns = [
     {
@@ -250,9 +296,37 @@ const BranchManagement = () => {
           <IconButton size="small" onClick={() => handleOpenDialog(params.row)} sx={{ color: '#3b82f6' }}>
             <EditIcon fontSize="small" />
           </IconButton>
-          <IconButton size="small" onClick={() => handleDelete(params.row.id)} sx={{ color: '#f44336' }}>
-            <DeleteIcon fontSize="small" />
+          <IconButton size="small" onClick={() => handleDelete(params.row.id)} sx={{ color: '#f44336' }} disabled={deletingId === params.row.id}>
+            {deletingId === params.row.id ? <CircularProgress size={18} /> : <DeleteIcon fontSize="small" />}
           </IconButton>
+        </Box>
+      ),
+    },
+    {
+      field: 'beer_price',
+      headerName: 'Beer Cost (ETB)',
+      width: 260,
+      sortable: false,
+      renderCell: (params) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+          <TextField
+            size="small"
+            type="number"
+            value={branchBeerPriceInputs[params.row.id] ?? 90}
+            onChange={(event) => handleBranchBeerPriceInput(params.row.id, event.target.value)}
+            placeholder="90"
+            inputProps={{ min: 1, step: 1 }}
+            sx={{ width: 100 }}
+          />
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<SaveIcon />}
+            disabled={savingBeerBranchId === params.row.id}
+            onClick={() => handleSaveBranchBeerPrice(params.row)}
+          >
+            {savingBeerBranchId === params.row.id ? 'Saving' : 'Save'}
+          </Button>
         </Box>
       ),
     },
@@ -498,8 +572,9 @@ const BranchManagement = () => {
             onClick={handleSubmit}
             variant="contained"
             sx={{ bgcolor: '#FF8A00', '&:hover': { bgcolor: '#CC6E00' } }}
+            disabled={submitting}
           >
-            {selectedBranch ? 'Update' : 'Create'} Branch
+            {submitting ? (selectedBranch ? 'Updating...' : 'Creating...') : (selectedBranch ? 'Update' : 'Create')} Branch
           </Button>
         </DialogActions>
       </Dialog>

@@ -132,6 +132,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS realtime_event_outbox (
+  id CHAR(36) NOT NULL,
+  event_group ENUM('session','board','draw','winner') NOT NULL DEFAULT 'session',
+  event_name VARCHAR(120) NOT NULL,
+  session_id CHAR(36) DEFAULT NULL,
+  company_id CHAR(36) DEFAULT NULL,
+  payload JSON NOT NULL,
+  status ENUM('PENDING','PROCESSING','PUBLISHED','FAILED','DEAD_LETTER') NOT NULL DEFAULT 'PENDING',
+  attempts INT NOT NULL DEFAULT 0,
+  available_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  published_at DATETIME DEFAULT NULL,
+  last_error VARCHAR(255) DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_realtime_event_outbox_status_available (status, available_at),
+  KEY idx_realtime_event_outbox_created_at (created_at),
+  KEY idx_realtime_event_outbox_session_id (session_id),
+  KEY idx_realtime_event_outbox_company_id (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS user_sessions (
   id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
@@ -168,23 +189,91 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   id CHAR(36) NOT NULL,
   wallet_id CHAR(36) NOT NULL,
   transaction_type ENUM('TOPUP','GAME_FEE','REFUND','ADJUSTMENT','BONUS','REVERSAL') NOT NULL,
+  direction ENUM('DEBIT','CREDIT') NOT NULL DEFAULT 'DEBIT',
   amount DECIMAL(12,2) NOT NULL,
   balance_before DECIMAL(12,2) NOT NULL,
   balance_after DECIMAL(12,2) NOT NULL,
   reference_type VARCHAR(50) DEFAULT NULL,
   reference_id CHAR(36) DEFAULT NULL,
+  idempotency_key VARCHAR(128) DEFAULT NULL,
+  correlation_id VARCHAR(128) DEFAULT NULL,
   description TEXT DEFAULT NULL,
+  status ENUM('POSTED','PENDING','FAILED','REVERSED') NOT NULL DEFAULT 'POSTED',
   created_by CHAR(36) DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_wallet_transactions_wallet_id (wallet_id),
   KEY idx_wallet_transactions_created_at (created_at),
+  KEY idx_wallet_transactions_reference (reference_type, reference_id),
+  KEY idx_wallet_transactions_idempotency_key (idempotency_key),
   CONSTRAINT fk_wallet_transactions_wallet
     FOREIGN KEY (wallet_id) REFERENCES wallet_accounts(id)
     ON DELETE CASCADE,
   CONSTRAINT fk_wallet_transactions_user
     FOREIGN KEY (created_by) REFERENCES users(id)
+    ON DELETE SET NULL,
+  CONSTRAINT chk_wallet_transactions_amount_positive
+    CHECK (amount > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS wallet_idempotency_requests (
+  id CHAR(36) NOT NULL,
+  endpoint VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
+  request_hash CHAR(64) NOT NULL,
+  request_payload JSON DEFAULT NULL,
+  response_code INT DEFAULT NULL,
+  response_body JSON DEFAULT NULL,
+  status ENUM('PENDING','COMPLETED','FAILED') NOT NULL DEFAULT 'PENDING',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME DEFAULT NULL,
+  expires_at DATETIME DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_wallet_idempotency_endpoint_key (endpoint, idempotency_key),
+  KEY idx_wallet_idempotency_created_at (created_at),
+  KEY idx_wallet_idempotency_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS wallet_reconciliation_runs (
+  id CHAR(36) NOT NULL,
+  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME DEFAULT NULL,
+  status ENUM('RUNNING','PASS','FAIL') NOT NULL DEFAULT 'RUNNING',
+  checked_wallets INT NOT NULL DEFAULT 0,
+  mismatch_count INT NOT NULL DEFAULT 0,
+  total_cached_balance DECIMAL(14,2) DEFAULT NULL,
+  total_ledger_balance DECIMAL(14,2) DEFAULT NULL,
+  notes TEXT DEFAULT NULL,
+  created_by CHAR(36) DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_wallet_reconciliation_runs_started (started_at),
+  KEY idx_wallet_reconciliation_runs_status (status),
+  CONSTRAINT fk_wallet_reconciliation_runs_user
+    FOREIGN KEY (created_by) REFERENCES users(id)
     ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS wallet_reconciliation_items (
+  id CHAR(36) NOT NULL,
+  run_id CHAR(36) NOT NULL,
+  wallet_id CHAR(36) NOT NULL,
+  cached_balance DECIMAL(14,2) NOT NULL,
+  ledger_balance DECIMAL(14,2) NOT NULL,
+  delta DECIMAL(14,2) NOT NULL,
+  severity ENUM('INFO','WARN','CRITICAL') NOT NULL DEFAULT 'WARN',
+  details JSON DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_wallet_reconciliation_items_run (run_id),
+  KEY idx_wallet_reconciliation_items_wallet (wallet_id),
+  KEY idx_wallet_reconciliation_items_created_at (created_at),
+  CONSTRAINT fk_wallet_reconciliation_items_run
+    FOREIGN KEY (run_id) REFERENCES wallet_reconciliation_runs(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_wallet_reconciliation_items_wallet
+    FOREIGN KEY (wallet_id) REFERENCES wallet_accounts(id)
+    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS wallet_topups (
@@ -203,7 +292,9 @@ CREATE TABLE IF NOT EXISTS wallet_topups (
     ON DELETE CASCADE,
   CONSTRAINT fk_wallet_topups_user
     FOREIGN KEY (approved_by) REFERENCES users(id)
-    ON DELETE SET NULL
+    ON DELETE SET NULL,
+  CONSTRAINT chk_wallet_topups_amount_positive
+    CHECK (amount > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS game_templates (
@@ -219,6 +310,7 @@ CREATE TABLE IF NOT EXISTS game_templates (
   total_prize_beers INT NOT NULL,
   seconds_per_call INT NOT NULL,
   generation_mode ENUM('SEQUENTIAL','RANDOM') NOT NULL DEFAULT 'RANDOM',
+  is_default TINYINT(1) NOT NULL DEFAULT 0,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   version INT NOT NULL DEFAULT 1,
   created_by CHAR(36) DEFAULT NULL,
@@ -227,6 +319,7 @@ CREATE TABLE IF NOT EXISTS game_templates (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_game_templates_template_code (template_code),
+  KEY idx_game_templates_company_default (company_id, is_default),
   KEY idx_game_templates_company_branch_active (company_id, branch_id, is_active),
   CONSTRAINT fk_game_templates_company
     FOREIGN KEY (company_id) REFERENCES hotel_companies(id)
@@ -256,8 +349,41 @@ CREATE TABLE IF NOT EXISTS game_template_prizes (
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS game_template_cards (
+  id CHAR(36) NOT NULL,
+  template_id CHAR(36) NOT NULL,
+  card_number INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_game_template_cards_number (template_id, card_number),
+  KEY idx_game_template_cards_template_id (template_id),
+  CONSTRAINT fk_game_template_cards_template
+    FOREIGN KEY (template_id) REFERENCES game_templates(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS game_template_card_numbers (
+  id CHAR(36) NOT NULL,
+  template_id CHAR(36) NOT NULL,
+  template_card_id CHAR(36) NOT NULL,
+  number_position INT NOT NULL,
+  number_value INT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_game_template_card_numbers_position (template_card_id, number_position),
+  KEY idx_game_template_card_numbers_template_id (template_id),
+  KEY idx_game_template_card_numbers_value (number_value),
+  CONSTRAINT fk_game_template_card_numbers_template
+    FOREIGN KEY (template_id) REFERENCES game_templates(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_game_template_card_numbers_card
+    FOREIGN KEY (template_card_id) REFERENCES game_template_cards(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS games (
   id CHAR(36) NOT NULL,
+  template_id CHAR(36) DEFAULT NULL,
   branch_id CHAR(36) NOT NULL,
   game_code VARCHAR(50) NOT NULL,
   title VARCHAR(255) DEFAULT NULL,
@@ -266,7 +392,7 @@ CREATE TABLE IF NOT EXISTS games (
   numbers_per_card INT NOT NULL DEFAULT 4,
   total_prize_beers INT NOT NULL,
   total_numbers_pool INT NOT NULL DEFAULT 100,
-  status ENUM('PENDING','ACTIVE','DRAWING','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  status ENUM('PENDING','ACTIVE','DRAWING','ENDED','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PENDING',
   started_at DATETIME DEFAULT NULL,
   ended_at DATETIME DEFAULT NULL,
   created_by CHAR(36) DEFAULT NULL,
@@ -274,8 +400,12 @@ CREATE TABLE IF NOT EXISTS games (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_games_game_code (game_code),
+  KEY idx_games_template_id (template_id),
   KEY idx_games_branch_id (branch_id),
   KEY idx_games_status (status),
+  CONSTRAINT fk_games_template
+    FOREIGN KEY (template_id) REFERENCES game_templates(id)
+    ON DELETE SET NULL,
   CONSTRAINT fk_games_branch
     FOREIGN KEY (branch_id) REFERENCES hotel_branches(id)
     ON DELETE CASCADE,
@@ -295,7 +425,9 @@ CREATE TABLE IF NOT EXISTS game_prizes (
   KEY idx_game_prizes_game_id (game_id),
   CONSTRAINT fk_game_prizes_game
     FOREIGN KEY (game_id) REFERENCES games(id)
-    ON DELETE CASCADE
+    ON DELETE CASCADE,
+  CONSTRAINT chk_game_prizes_beer_quantity_positive
+    CHECK (beer_quantity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS game_charges (
@@ -313,7 +445,9 @@ CREATE TABLE IF NOT EXISTS game_charges (
     ON DELETE CASCADE,
   CONSTRAINT fk_game_charges_wallet_txn
     FOREIGN KEY (wallet_transaction_id) REFERENCES wallet_transactions(id)
-    ON DELETE SET NULL
+    ON DELETE SET NULL,
+  CONSTRAINT chk_game_charges_amount_non_negative
+    CHECK (charge_amount >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS cards (
@@ -377,7 +511,9 @@ CREATE TABLE IF NOT EXISTS game_sales (
     ON DELETE CASCADE,
   CONSTRAINT fk_game_sales_sold_by
     FOREIGN KEY (sold_by) REFERENCES users(id)
-    ON DELETE SET NULL
+    ON DELETE SET NULL,
+  CONSTRAINT chk_game_sales_sold_price_positive
+    CHECK (sold_price > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS draws (
@@ -397,7 +533,9 @@ CREATE TABLE IF NOT EXISTS draws (
     ON DELETE CASCADE,
   CONSTRAINT fk_draws_created_by
     FOREIGN KEY (created_by) REFERENCES users(id)
-    ON DELETE SET NULL
+    ON DELETE SET NULL,
+  CONSTRAINT chk_draws_beer_quantity_positive
+    CHECK (beer_quantity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS winners (

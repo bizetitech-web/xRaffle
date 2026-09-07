@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 export class BoardRepository {
   async findSession(connection, sessionId, { forUpdate = false } = {}) {
     const lockClause = forUpdate ? 'FOR UPDATE' : '';
@@ -76,6 +78,29 @@ export class BoardRepository {
       [...params, pageSize, offset]
     );
 
+    const cardIds = rows.map((row) => row.cardId).filter(Boolean);
+    const numbersByCardId = new Map();
+    if (cardIds.length > 0) {
+      const placeholders = cardIds.map(() => '?').join(', ');
+      const [numberRows] = await connection.query(
+        `SELECT
+          card_id AS cardId,
+          number_position AS numberPosition,
+          number_value AS numberValue
+         FROM card_numbers
+         WHERE game_id = ?
+           AND card_id IN (${placeholders})
+         ORDER BY card_id ASC, number_position ASC`,
+        [sessionId, ...cardIds]
+      );
+
+      for (const item of numberRows) {
+        const list = numbersByCardId.get(item.cardId) || [];
+        list.push(Number(item.numberValue));
+        numbersByCardId.set(item.cardId, list);
+      }
+    }
+
     const totals = await this.getTotals(connection, sessionId);
 
     return {
@@ -83,6 +108,7 @@ export class BoardRepository {
         ...row,
         cardNumber: Number(row.cardNumber || 0),
         amount: row.amount !== null && row.amount !== undefined ? Number(row.amount) : null,
+        numbers: numbersByCardId.get(row.cardId) || [],
       })),
       total: Number(countRow.total || 0),
       page,
@@ -90,6 +116,23 @@ export class BoardRepository {
       totals,
       revenuePreview: totals.revenue,
     };
+  }
+
+  async listPrizes(connection, sessionId) {
+    const [rows] = await connection.query(
+      `SELECT
+        draw_position AS drawPosition,
+        beer_quantity AS beerQuantity
+       FROM game_prizes
+       WHERE game_id = ?
+       ORDER BY draw_position ASC`,
+      [sessionId]
+    );
+
+    return rows.map((row) => ({
+      drawPosition: Number(row.drawPosition || 0),
+      beerQuantity: Number(row.beerQuantity || 0),
+    }));
   }
 
   async findCard(connection, sessionId, payload, { forUpdate = false } = {}) {
@@ -135,12 +178,14 @@ export class BoardRepository {
       };
     }
 
+    const saleId = crypto.randomUUID();
     await connection.query(
       `INSERT INTO game_sales (
         id, game_id, card_id, sold_by, sold_price, payment_method,
         customer_name, customer_phone, note, sold_at, created_at
-      ) VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
       [
+        saleId,
         sessionId,
         card.cardId,
         payload.soldBy,
@@ -160,7 +205,15 @@ export class BoardRepository {
     );
 
     await this.touchSession(connection, sessionId);
-    return { skipped: false, card: { ...card, status: 'SOLD' } };
+    return {
+      skipped: false,
+      sale: {
+        saleId,
+        paymentMethod: payload.paymentMethod,
+        amount: Number(payload.amount || 0),
+      },
+      card: { ...card, status: 'SOLD' },
+    };
   }
 
   async unsellCard(connection, sessionId, payload) {

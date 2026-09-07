@@ -1,0 +1,140 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: xraffle_test
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+        ports:
+          - 3306:3306
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+        ports:
+          - 6379:6379
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_NAME: xraffle_test
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      E2E_BASE_URL: http://localhost:3001
+      E2E_API_BASE_URL: http://localhost:5000/api
+      SUPER_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      SUPER_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache node modules (server)
+        uses: actions/cache@v4
+        with:
+          path: server/node_modules
+          key: ${{ runner.os }}-server-${{ hashFiles('server/package-lock.json') }}
+
+      - name: Cache node modules (client)
+        uses: actions/cache@v4
+        with:
+          path: client/node_modules
+          key: ${{ runner.os }}-client-${{ hashFiles('client/package-lock.json') }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install server & client deps
+        run: |
+          npm --prefix server ci
+          npm --prefix client ci
+
+      - name: Wait for MySQL
+        run: |
+          for i in {1..30}; do
+            mysqladmin ping -h 127.0.0.1 -uroot -ppassword >/dev/null 2>&1 && break || sleep 2;
+          done
+
+      - name: Run migrations
+        working-directory: ./server
+        run: |
+          DB_HOST=127.0.0.1 DB_USER=root DB_PASSWORD=password DB_NAME=xraffle_test npm run migrate
+
+      - name: Seed organization
+        working-directory: ./server
+        run: |
+          HOTEL_NAME="E2E Test Hotel" HOTEL_EMAIL="e2e@example.com" node scripts/createOrganization.js
+
+      - name: Create super-admin
+        working-directory: ./server
+        env:
+          SUPER_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          SUPER_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: |
+          node scripts/createSuperAdmin.js
+
+      - name: Start server
+        working-directory: ./server
+        run: |
+          DB_HOST=127.0.0.1 DB_USER=root DB_PASSWORD=password DB_NAME=xraffle_test JWT_SECRET=${{ secrets.JWT_SECRET }} REDIS_URL=redis://127.0.0.1:6379 JOB_QUEUE_ENABLED=true npm run start &
+          # wait for server health
+          for i in {1..30}; do
+            curl -sSf http://127.0.0.1:5000/api/health && break || sleep 2;
+          done
+
+      - name: Run Phase1 smoke (login + smoke script)
+        env:
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+          E2E_API_BASE_URL: http://127.0.0.1:5000/api
+        run: |
+          node -e "(async()=>{ try{ const res=await fetch('http://127.0.0.1:5000/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:process.env.E2E_ADMIN_EMAIL,password:process.env.E2E_ADMIN_PASSWORD})}); const j=await res.json(); if(!j.token){ console.error('Login failed',JSON.stringify(j)); process.exit(1);} const token='Bearer '+j.token; const cp=require('child_process'); const ret=cp.spawnSync('node',['scripts/phase1_smoke.js'],{env:Object.assign({},process.env,{AUTH_TOKEN:token,API_BASE:process.env.E2E_API_BASE_URL}),stdio:'inherit'}); process.exit(ret.status);}catch(e){console.error(e);process.exit(2);} })()"
+
+      - name: Start client dev server
+        working-directory: ./client
+        run: |
+          npm run dev -- --port 3001 &
+          for i in {1..30}; do
+            curl -sSf http://127.0.0.1:3001 || sleep 2 && break
+          done
+
+      - name: Install Playwright browsers
+        working-directory: ./client
+        run: npx playwright install --with-deps
+      # DLQ UI test removed as part of game module/DLQ removal
+
+      - name: Run Playwright E2E
+        working-directory: ./client
+        env:
+          E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+          E2E_BASE_URL: http://127.0.0.1:3001
+          E2E_API_BASE_URL: http://127.0.0.1:5000/api
+        run: |
+          npm run e2e -- --reporter=github
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: client/test-results || client/playwright-report || client/test-results

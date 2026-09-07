@@ -53,12 +53,14 @@ export class PlaygroundRepository {
     }));
   }
 
-  async getNextPrize(connection, sessionId, drawPosition) {
+  async getNextPrize(connection, sessionId, drawPosition, { forUpdate = false } = {}) {
+    const lockClause = forUpdate ? 'FOR UPDATE' : '';
     const [rows] = await connection.query(
       `SELECT draw_position AS drawPosition, beer_quantity AS beerQuantity
        FROM game_prizes
        WHERE game_id = ? AND draw_position = ?
-       LIMIT 1`,
+       LIMIT 1
+       ${lockClause}`,
       [sessionId, drawPosition]
     );
 
@@ -72,22 +74,42 @@ export class PlaygroundRepository {
     };
   }
 
+  async getPrizeCount(connection, sessionId) {
+    const [[row]] = await connection.query(
+      `SELECT COUNT(*) AS totalPrizes
+       FROM game_prizes
+       WHERE game_id = ?`,
+      [sessionId]
+    );
+
+    return Number(row?.totalPrizes || 0);
+  }
+
   async getPoolState(connection, sessionId) {
     const session = await this.findSession(connection, sessionId);
     if (!session) {
       return null;
     }
 
-    const draws = await this.getDrawRows(connection, sessionId);
+    const [draws, prizeCount] = await Promise.all([
+      this.getDrawRows(connection, sessionId),
+      this.getPrizeCount(connection, sessionId),
+    ]);
+
     const calledNumbers = draws.map((item) => item.winningNumber);
+    const currentRound = calledNumbers.length;
+    const remainingPrizes = Math.max(0, prizeCount - currentRound);
 
     return {
       sessionId: session.id,
       status: session.status,
       totalNumbersPool: session.totalNumbersPool,
+      prizeCount,
       calledNumbers,
       remainingCount: Math.max(0, session.totalNumbersPool - calledNumbers.length),
-      currentRound: calledNumbers.length,
+      currentRound,
+      remainingPrizes,
+      canEnd: prizeCount > 0 && currentRound >= prizeCount,
       version: session.version,
     };
   }

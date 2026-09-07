@@ -38,7 +38,7 @@ import {
 } from '@mui/icons-material';
 import { DataGrid } from '@mui/x-data-grid';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
-import axios from 'axios';
+import api from '../../services/api';
 
 const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
 
@@ -69,7 +69,7 @@ const RoleManagement = () => {
   const fetchRoles = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE}/admin/roles`);
+      const response = await api.get(`/admin/roles`);
       setRoles(response.data);
       setError(null);
     } catch (err) {
@@ -83,7 +83,7 @@ const RoleManagement = () => {
   const fetchPermissions = async () => {
     try {
       // Try to get grouped permissions first
-      const response = await axios.get(`${API_BASE}/admin/permissions`);
+      const response = await api.get(`/admin/permissions`);
       
       // Check if response is grouped by module or flat array
       if (response.data && typeof response.data === 'object') {
@@ -124,7 +124,7 @@ const RoleManagement = () => {
   const handleOpenDialog = async (role = null) => {
     if (role) {
       try {
-        const detailResponse = await axios.get(`${API_BASE}/admin/roles/${role.id}`);
+        const detailResponse = await api.get(`/admin/roles/${role.id}`);
         const detail = detailResponse.data || role;
 
         setSelectedRole(detail);
@@ -218,26 +218,70 @@ const RoleManagement = () => {
         return;
       }
 
+      // Client-side validation: level must be integer 1-9
+      const levelNum = parseInt(formData.level, 10);
+      if (Number.isNaN(levelNum) || levelNum < 1 || levelNum > 9) {
+        setError('Role level must be a number between 1 and 9');
+        return;
+      }
+
+      // Validate permissions are UUIDs
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!Array.isArray(formData.permissions)) {
+        setError('Permissions must be an array');
+        return;
+      }
+      for (const pid of formData.permissions) {
+        if (!uuidRe.test(pid)) {
+          setError('One or more permission IDs are invalid UUIDs');
+          return;
+        }
+      }
+
       const payload = {
         name: formData.name,
         description: formData.description,
-        level: parseInt(formData.level),
+        level: levelNum,
         permissions: formData.permissions
       };
 
+      // Debug: ensure token present
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('No auth token found. Are you logged in?');
+        return;
+      }
+
+      console.debug('Submitting role payload', payload);
       if (selectedRole) {
         // Update role
-        await axios.put(`${API_BASE}/admin/roles/${selectedRole.id}`, payload);
+        const resp = await api.put(`/admin/roles/${selectedRole.id}`, payload);
+        console.debug('Update response', resp?.data);
         setSuccess('Role updated successfully');
       } else {
         // Create role
-        await axios.post(`${API_BASE}/admin/roles`, payload);
+        const resp = await api.post(`/admin/roles`, payload);
+        console.debug('Create response', resp?.data);
         setSuccess('Role created successfully');
       }
       fetchRoles();
       handleCloseDialog();
     } catch (err) {
-      setError(err.response?.data?.error || 'Operation failed');
+      // Prefer server validation details when available
+      const serverData = err.response?.data;
+      if (serverData) {
+        // If express-validator returned errors array
+        if (Array.isArray(serverData.errors) && serverData.errors.length > 0) {
+          const messages = serverData.errors.map((e) => e.msg || e.message || JSON.stringify(e)).join('; ');
+          setError(messages);
+        } else if (serverData.error) {
+          setError(serverData.error);
+        } else {
+          setError(JSON.stringify(serverData));
+        }
+      } else {
+        setError(err.message || 'Operation failed');
+      }
     }
   };
 
@@ -247,7 +291,7 @@ const RoleManagement = () => {
     }
     
     try {
-      await axios.delete(`${API_BASE}/admin/roles/${roleId}`);
+      await api.delete(`/admin/roles/${roleId}`);
       setSuccess('Role deleted successfully');
       fetchRoles();
     } catch (err) {

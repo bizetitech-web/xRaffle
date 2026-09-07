@@ -113,7 +113,7 @@ test('runtime schema contract for games/cards/game_sales/winners stays compatibl
 
     const gamesStatus = games.get('status')?.columnType || '';
     assert.ok(
-      enumContainsAll(gamesStatus, ['PENDING', 'ACTIVE', 'DRAWING', 'COMPLETED', 'CANCELLED']),
+      enumContainsAll(gamesStatus, ['PENDING', 'ACTIVE', 'DRAWING', 'ENDED', 'COMPLETED', 'CANCELLED']),
       `Unexpected games.status enum: ${gamesStatus}`
     );
 

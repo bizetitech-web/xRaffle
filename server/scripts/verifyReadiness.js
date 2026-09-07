@@ -10,9 +10,13 @@ const REQUIRED_TABLES = [
   'user_roles',
   'role_permissions',
   'audit_logs',
+  'realtime_event_outbox',
   'wallet_accounts',
   'wallet_transactions',
   'wallet_topups',
+  'wallet_idempotency_requests',
+  'wallet_reconciliation_runs',
+  'wallet_reconciliation_items',
   'games',
   'game_prizes',
   'game_charges',
@@ -23,11 +27,13 @@ const REQUIRED_TABLES = [
   'winners',
 ];
 
-const REQUIRED_ROLES = ['super_admin', 'org_admin', 'manager', 'viewer'];
+const REQUIRED_ROLES = ['super_admin', 'org_admin', 'operator'];
 const REQUIRED_PERMISSIONS = [
   'MANAGE_USERS',
   'MANAGE_ROLES',
   'MANAGE_HOTELS',
+  'MANAGE_HOTEL',
+  'MANAGE_FEE_TEMPLATES',
   'VIEW_AUDIT_LOGS',
   'VIEW_WALLET',
   'TOPUP_WALLET',
@@ -38,13 +44,13 @@ const REQUIRED_PERMISSIONS = [
   'VIEW_WINNERS',
   'CLAIM_PRIZES',
   'VIEW_REPORTS',
+  'VIEW_DAILY_REPORTS',
   'VIEW_GLOBAL_REPORTS',
 ];
 const REQUIRED_ROLE_IDS = [
   '79a386a5-207b-11f1-89b6-a4e078b831cc',
   '79a386a6-207b-11f1-89b6-a4e078b831cc',
   '79a386a7-207b-11f1-89b6-a4e078b831cc',
-  '79a386a8-207b-11f1-89b6-a4e078b831cc',
 ];
 const REQUIRED_PERMISSION_IDS = [
   '89a386a1-207b-11f1-89b6-a4e078b831cc',
@@ -61,6 +67,18 @@ const REQUIRED_PERMISSION_IDS = [
   '89a386ac-207b-11f1-89b6-a4e078b831cc',
   '89a386ad-207b-11f1-89b6-a4e078b831cc',
   '89a386ae-207b-11f1-89b6-a4e078b831cc',
+  '89a386af-207b-11f1-89b6-a4e078b831cc',
+  '89a386b0-207b-11f1-89b6-a4e078b831cc',
+  '89a386b1-207b-11f1-89b6-a4e078b831cc',
+];
+
+const REQUIRED_CHECK_CONSTRAINTS = [
+  { table: 'wallet_topups', name: 'chk_wallet_topups_amount_positive' },
+  { table: 'wallet_transactions', name: 'chk_wallet_transactions_amount_positive' },
+  { table: 'game_charges', name: 'chk_game_charges_amount_non_negative' },
+  { table: 'game_sales', name: 'chk_game_sales_sold_price_positive' },
+  { table: 'game_prizes', name: 'chk_game_prizes_beer_quantity_positive' },
+  { table: 'draws', name: 'chk_draws_beer_quantity_positive' },
 ];
 
 function normalizeRoleName(name) {
@@ -100,6 +118,18 @@ async function verifyReadiness() {
   const existingPermissions = new Set(permissionRows.map((row) => row.id));
   const missingPermissions = REQUIRED_PERMISSION_IDS.filter((id) => !existingPermissions.has(id));
 
+  const [checkRows] = await pool.query(
+    `SELECT TABLE_NAME AS tableName, CONSTRAINT_NAME AS constraintName
+     FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = ?
+       AND CONSTRAINT_TYPE = 'CHECK'`,
+    [process.env.DB_NAME]
+  );
+  const existingChecks = new Set(checkRows.map((row) => `${row.tableName}:${row.constraintName}`));
+  const missingChecks = REQUIRED_CHECK_CONSTRAINTS.filter(
+    (item) => !existingChecks.has(`${item.table}:${item.name}`)
+  );
+
   const [[orgCount]] = await pool.query('SELECT COUNT(*) AS count FROM hotel_companies');
   const [[branchCount]] = await pool.query('SELECT COUNT(*) AS count FROM hotel_branches');
   const [[userCount]] = await pool.query('SELECT COUNT(*) AS count FROM users');
@@ -109,7 +139,7 @@ async function verifyReadiness() {
   const [[gameCount]] = await pool.query('SELECT COUNT(*) AS count FROM games');
 
   const report = {
-    status: missingTables.length || missingRoles.length || missingPermissions.length ? 'failed' : 'ok',
+    status: missingTables.length || missingRoles.length || missingPermissions.length || missingChecks.length ? 'failed' : 'ok',
     database: process.env.DB_NAME,
     durationMs: Date.now() - startedAt,
     checks: {
@@ -119,6 +149,11 @@ async function verifyReadiness() {
         required: REQUIRED_PERMISSION_IDS.length,
         present: existingPermissions.size,
         missing: missingPermissions,
+      },
+      checkConstraints: {
+        required: REQUIRED_CHECK_CONSTRAINTS.length,
+        present: REQUIRED_CHECK_CONSTRAINTS.length - missingChecks.length,
+        missing: missingChecks,
       },
     },
     counts: {

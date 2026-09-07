@@ -26,16 +26,80 @@ const withMockedTransaction = async (run) => {
   const originalGetConnection = pool.getConnection;
   const originalFindById = gameSessionRepository.findById;
   const originalFindTemplateForSessionCreate = gameSessionRepository.findTemplateForSessionCreate;
+  const originalFindDefaultBranchByCompany = gameSessionRepository.findDefaultBranchByCompany;
+  const originalHasPersistedTemplateCards = gameSessionRepository.hasPersistedTemplateCards;
   const originalCreateFromTemplate = gameSessionRepository.createFromTemplate;
   const originalUpdateStatus = gameSessionRepository.updateStatus;
   const originalResetRuntime = gameSessionRepository.resetRuntime;
   const originalComplete = gameSessionRepository.complete;
+
+  const idempotencyStore = new Map();
+  const idempotencyById = new Map();
 
   const connection = {
     beginTransaction: async () => {},
     commit: async () => {},
     rollback: async () => {},
     release: () => {},
+    query: async (sql, params = []) => {
+      const normalized = String(sql || '').replace(/\s+/g, ' ').trim().toUpperCase();
+
+      if (normalized.startsWith('INSERT INTO WALLET_IDEMPOTENCY_REQUESTS')) {
+        const [id, endpoint, key, requestHash, requestPayload] = params;
+        const cacheKey = `${endpoint}|${key}`;
+        if (!idempotencyStore.has(cacheKey)) {
+          const row = {
+            id,
+            endpoint,
+            idempotency_key: key,
+            request_hash: requestHash,
+            request_payload: requestPayload,
+            response_code: null,
+            response_body: null,
+            status: 'PENDING',
+          };
+          idempotencyStore.set(cacheKey, row);
+          idempotencyById.set(id, row);
+        }
+        return [{ affectedRows: 1 }];
+      }
+
+      if (normalized.includes('FROM WALLET_IDEMPOTENCY_REQUESTS') && normalized.includes('FOR UPDATE')) {
+        const [endpoint, key] = params;
+        const row = idempotencyStore.get(`${endpoint}|${key}`) || null;
+        return [[row]];
+      }
+
+      if (normalized.startsWith('UPDATE WALLET_IDEMPOTENCY_REQUESTS')) {
+        const [responseBody, id] = params;
+        const row = idempotencyById.get(id);
+        if (row) {
+          row.response_body = responseBody;
+          row.response_code = 200;
+          row.status = 'COMPLETED';
+        }
+        return [{ affectedRows: row ? 1 : 0 }];
+      }
+
+      if (normalized.includes('FROM GAME_CHARGES') && normalized.includes('FOR UPDATE')) {
+        // default: no charge row in unit tests unless explicitly mocked elsewhere
+        return [[null]];
+      }
+
+      if (normalized.includes('FROM DRAWS')) {
+        return [[{ total: 1 }]];
+      }
+
+      if (normalized.includes('FROM GAME_PRIZES')) {
+        return [[{ total: 1 }]];
+      }
+
+      if (normalized.includes('FROM WALLET_TRANSACTIONS WHERE ID =')) {
+        return [[null]];
+      }
+
+      return [[{}]];
+    },
   };
 
   const calls = {
@@ -47,12 +111,20 @@ const withMockedTransaction = async (run) => {
   pool.getConnection = async () => connection;
 
   try {
+    gameSessionRepository.hasPersistedTemplateCards = async () => true;
+
     await run({
       setFindTemplateForSessionCreate: (fn) => {
         gameSessionRepository.findTemplateForSessionCreate = fn;
       },
       setCreateFromTemplate: (fn) => {
         gameSessionRepository.createFromTemplate = fn;
+      },
+      setFindDefaultBranchByCompany: (fn) => {
+        gameSessionRepository.findDefaultBranchByCompany = fn;
+      },
+      setHasPersistedTemplateCards: (fn) => {
+        gameSessionRepository.hasPersistedTemplateCards = fn;
       },
       setFindById: (fn) => {
         gameSessionRepository.findById = fn;
@@ -82,6 +154,8 @@ const withMockedTransaction = async (run) => {
     pool.getConnection = originalGetConnection;
     gameSessionRepository.findById = originalFindById;
     gameSessionRepository.findTemplateForSessionCreate = originalFindTemplateForSessionCreate;
+    gameSessionRepository.findDefaultBranchByCompany = originalFindDefaultBranchByCompany;
+    gameSessionRepository.hasPersistedTemplateCards = originalHasPersistedTemplateCards;
     gameSessionRepository.createFromTemplate = originalCreateFromTemplate;
     gameSessionRepository.updateStatus = originalUpdateStatus;
     gameSessionRepository.resetRuntime = originalResetRuntime;
@@ -129,6 +203,29 @@ test('createSession creates a session from template', async () => {
     });
   } finally {
     pool.query = originalQuery;
+  }
+});
+
+test('listSessions forwards templateId filter for deterministic lookup', async () => {
+  const originalListSessions = gameSessionRepository.listSessions;
+  try {
+    let receivedFilters = null;
+    gameSessionRepository.listSessions = async (_connection, filters) => {
+      receivedFilters = filters;
+      return [];
+    };
+
+    const result = await gameSessionService.listSessions({
+      query: { templateId: 'template-1' },
+      user: { role_level: 2 },
+      hotelCompanyId: 'co-1',
+    });
+
+    assert.deepEqual(result, []);
+    assert.equal(receivedFilters.companyId, 'co-1');
+    assert.equal(receivedFilters.templateId, 'template-1');
+  } finally {
+    gameSessionRepository.listSessions = originalListSessions;
   }
 });
 
@@ -182,6 +279,93 @@ test('createSession enforces company scope', async () => {
   });
 });
 
+test('createSession rejects template with zero persisted cards', async () => {
+  await withMockedTransaction(async ({ setFindTemplateForSessionCreate, setHasPersistedTemplateCards }) => {
+    setFindTemplateForSessionCreate(async () => ({
+      id: 'template-1',
+      companyId: 'co-1',
+      branchId: 'br-1',
+      isActive: true,
+    }));
+
+    setHasPersistedTemplateCards(async () => false);
+
+    await assert.rejects(
+      () => gameSessionService.createSession({
+        body: { templateId: 'template-1' },
+        params: {},
+        user: { sub: 'user-1', role_level: 2 },
+        hotelCompanyId: 'co-1',
+      }),
+      (error) => {
+        assert.equal(error.status, 400);
+        assert.equal(error.code, 'VALIDATION_ERROR');
+        assert.match(error.message, /no persisted cards/i);
+        return true;
+      }
+    );
+  });
+});
+
+test('createSession resolves default branch when template branch is null', async () => {
+  await withMockedTransaction(async ({ setFindTemplateForSessionCreate, setFindDefaultBranchByCompany, setCreateFromTemplate }) => {
+    setFindTemplateForSessionCreate(async () => ({
+      id: 'template-1',
+      companyId: 'co-1',
+      branchId: null,
+      isActive: true,
+    }));
+
+    setFindDefaultBranchByCompany(async () => 'br-fallback-1');
+
+    setCreateFromTemplate(async (_connection, payload) => ({
+      id: 'session-1',
+      sessionCode: payload.gameCode,
+      status: 'PENDING',
+      version: 1,
+      usedBranchId: payload.branchId,
+    }));
+
+    const result = await gameSessionService.createSession({
+      body: { templateId: 'template-1' },
+      params: {},
+      user: { sub: 'user-1', role_level: 2 },
+      hotelCompanyId: 'co-1',
+    });
+
+    assert.equal(result.sessionId, 'session-1');
+    assert.equal(result.status, 'PENDING');
+  });
+});
+
+test('createSession fails with validation error when no active branch exists', async () => {
+  await withMockedTransaction(async ({ setFindTemplateForSessionCreate, setFindDefaultBranchByCompany }) => {
+    setFindTemplateForSessionCreate(async () => ({
+      id: 'template-1',
+      companyId: 'co-1',
+      branchId: null,
+      isActive: true,
+    }));
+
+    setFindDefaultBranchByCompany(async () => null);
+
+    await assert.rejects(
+      () => gameSessionService.createSession({
+        body: { templateId: 'template-1' },
+        params: {},
+        user: { sub: 'user-1', role_level: 2 },
+        hotelCompanyId: 'co-1',
+      }),
+      (error) => {
+        assert.equal(error.status, 400);
+        assert.equal(error.code, 'VALIDATION_ERROR');
+        assert.match(error.message, /no active branch/i);
+        return true;
+      }
+    );
+  });
+});
+
 test('startSession transitions PENDING to ACTIVE', async () => {
   const originalEmitSessionEvent = realtimeGateway.emitSessionEvent;
   const realtimeEvents = [];
@@ -211,6 +395,7 @@ test('startSession transitions PENDING to ACTIVE', async () => {
         sessionId: 'session-1',
         status: 'ACTIVE',
         version: 6,
+        idempotencyStatus: 'new',
       });
 
       assert.equal(calls.updateStatus.length, 1);
@@ -291,6 +476,80 @@ test('endSession enforces company scope for non-super-admin', async () => {
         return true;
       }
     );
+  });
+});
+
+test('endSession transitions to ENDED and sets endedAt', async () => {
+  await withMockedTransaction(async ({ setFindById, setUpdateStatus, calls }) => {
+    setFindById(async () => ({
+      id: 'session-1',
+      companyId: 'co-1',
+      status: 'DRAWING',
+      version: 3,
+    }));
+
+    setUpdateStatus(async () => ({
+      id: 'session-1',
+      status: 'ENDED',
+      version: 4,
+    }));
+
+    const result = await gameSessionService.endSession(makeReq({ sessionId: 'session-1', expectedVersion: 3 }));
+
+    assert.equal(calls.updateStatus[0][2], 'ENDED');
+    assert.deepEqual(calls.updateStatus[0][4], { setEndedAt: true });
+    assert.deepEqual(result, {
+      sessionId: 'session-1',
+      status: 'ENDED',
+      version: 4,
+    });
+  });
+});
+
+test('endSession falls back to complete() when ENDED is unsupported by DB enum', async () => {
+  await withMockedTransaction(async ({ setFindById, setUpdateStatus, setComplete, calls }) => {
+    setFindById(async () => ({
+      id: 'session-1',
+      companyId: 'co-1',
+      status: 'DRAWING',
+      version: 3,
+    }));
+
+    setUpdateStatus(async () => {
+      const error = new Error("Data truncated for column 'status' at row 1");
+      error.code = 'WARN_DATA_TRUNCATED';
+      error.errno = 1265;
+      error.sqlMessage = "Data truncated for column 'status' at row 1";
+      throw error;
+    });
+
+    setComplete(async () => ({
+      sessionId: 'session-1',
+      status: 'COMPLETED',
+      version: 4,
+      summary: {
+        drawCount: 5,
+        winnersCount: 1,
+        claimsCount: 0,
+        revenue: 1500,
+      },
+    }));
+
+    const result = await gameSessionService.endSession(makeReq({ sessionId: 'session-1', expectedVersion: 3 }));
+
+    assert.equal(calls.updateStatus.length, 1);
+    assert.equal(calls.complete.length, 1);
+    assert.deepEqual(result, {
+      sessionId: 'session-1',
+      status: 'COMPLETED',
+      version: 4,
+      summary: {
+        drawCount: 5,
+        winnersCount: 1,
+        claimsCount: 0,
+        revenue: 1500,
+      },
+    });
   });
 });
 

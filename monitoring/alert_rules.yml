@@ -1,0 +1,59 @@
+groups:
+  - name: xraffle-alerts
+    rules:
+      - alert: HighDLQRate
+        expr: increase(xraffle_cardworker_dlq_moved_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ activity detected"
+          description: "Jobs moved to DLQ in the last 5 minutes: {{ $value }}"
+      - alert: HighCardWorkerFailures
+        expr: increase(xraffle_cardworker_failed_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Card generation failures spike"
+          description: "{{ $value }} failures in the last 5 minutes"
+      - alert: ManualTestAlert
+        expr: vector(1)
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Manual test alert - fires immediately"
+          description: "This is a test alert used to verify Alertmanager -> Slack integration. Remove or disable after testing."
+      - alert: WalletReconciliationMismatchHigh
+        expr: xraffle_wallet_reconciliation_latest_mismatch_count > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Wallet reconciliation mismatches above warning threshold"
+          description: "Latest wallet reconciliation mismatch_count is {{ $value }} (warning threshold: 25)."
+      - alert: WalletReconciliationMismatchCritical
+        expr: xraffle_wallet_reconciliation_latest_mismatch_count > 100
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Wallet reconciliation mismatches above critical threshold"
+          description: "Latest wallet reconciliation mismatch_count is {{ $value }} (critical threshold: 100)."
+      - alert: WalletReconciliationLatestRunFailed
+        expr: xraffle_wallet_reconciliation_latest_status_fail == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Latest wallet reconciliation run failed"
+          description: "The latest wallet reconciliation run status is FAIL."
+      - alert: WalletReconciliationStaleRun
+        expr: xraffle_wallet_reconciliation_latest_run_age_seconds > 7200
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Wallet reconciliation run is stale"
+          description: "No recent wallet reconciliation update for more than 2 hours (current age seconds: {{ $value }})."

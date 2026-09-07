@@ -1,10 +1,9 @@
-import { logError } from '../utils/logger.js';
+import { logError, logWarn } from '../utils/logger.js';
 
 export const errorHandler = (err, req, res, next) => {
   const status = err?.status || 500;
   const code = err?.code;
-
-  logError('Unhandled API error', {
+  const requestMeta = {
     error: err,
     request: {
       method: req.method,
@@ -12,7 +11,14 @@ export const errorHandler = (err, req, res, next) => {
       ip: req.ip,
       userId: req.user?.sub,
     },
-  });
+  };
+
+  if (status >= 500) {
+    logError('Unhandled API error', requestMeta);
+  } else {
+    logWarn('API client error', requestMeta);
+  }
+
   const payload = {
     error: err?.message || 'Server error',
   };

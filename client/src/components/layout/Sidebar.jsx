@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Drawer,
   List,
@@ -11,10 +11,12 @@ import {
   Typography,
   Toolbar,
   useMediaQuery,
+  Badge,
 } from '@mui/material';
 import { useTheme as useMuiTheme } from '@mui/material/styles';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { listGameTemplates } from '../../services/api';
 import {
   Dashboard as DashboardIcon,
   Settings as SettingsIcon,
@@ -25,6 +27,8 @@ import {
   Security as RolesIcon,
   Business as BusinessIcon,
   Insights as InsightsIcon,
+  AccountBalanceWallet as WalletsIcon,
+  Widgets as TemplatesIcon,
 } from '@mui/icons-material';
 const drawerWidth = 240;
 const miniDrawerWidth = 72;
@@ -35,6 +39,7 @@ const Sidebar = ({ open, variant, onClose }) => {
   const isMini = isMobile || (variant === 'permanent' && !open);
   const { hasPermission } = useAuth();
   const muiTheme = useMuiTheme();
+  const [activeTemplatesCount, setActiveTemplatesCount] = useState(0);
 
   // Helper function to check if menu item should be shown
   const canShowMenuItem = (item) => {
@@ -84,7 +89,13 @@ const Sidebar = ({ open, variant, onClose }) => {
       text: 'Hotel Branches',
       icon: <BusinessIcon />,
       path: '/admin/branches',
-      requiredPermissions: ['MANAGE_HOTELS']
+      requiredPermissions: ['MANAGE_HOTEL']
+    },
+    {
+      text: 'Wallets',
+      icon: <WalletsIcon />,
+      path: '/admin/wallets',
+      requiredPermissions: ['VIEW_WALLET']
     },
     {
       text: 'Games',
@@ -92,6 +103,19 @@ const Sidebar = ({ open, variant, onClose }) => {
       path: '/admin/games',
       requiredPermissions: ['VIEW_GAMES']
     },
+    {
+      text: 'Templates',
+      icon: <TemplatesIcon />,
+      path: '/admin/game-templates',
+      requiredPermissions: ['MANAGE_GAMES']
+    },
+    {
+      text: 'Fee Templates',
+      icon: <TemplatesIcon />,
+      path: '/admin/hotel-charge-templates',
+      requiredPermissions: ['MANAGE_FEE_TEMPLATES']
+    },
+    // Games removed; DLQ Monitor removed
   ];
 
   const reportMenuItems = [
@@ -99,13 +123,13 @@ const Sidebar = ({ open, variant, onClose }) => {
       text: 'Branch Daily',
       icon: <InsightsIcon />,
       path: '/admin/reports/branch-daily',
-      requiredPermissions: ['VIEW_REPORTS']
+      requiredPermissions: ['VIEW_DAILY_REPORTS']
     },
     {
       text: 'Company Wallet',
       icon: <InsightsIcon />,
       path: '/admin/reports/company-wallet',
-      requiredPermissions: ['VIEW_REPORTS']
+      requiredPermissions: ['VIEW_DAILY_REPORTS']
     },
     {
       text: 'Global Reports',
@@ -121,7 +145,6 @@ const Sidebar = ({ open, variant, onClose }) => {
       text: 'Settings', 
       icon: <SettingsIcon />, 
       path: '/settings',
-      requiredPermissions: ['MANAGE_USERS'],
     },
     { 
       text: 'Help', 
@@ -135,6 +158,22 @@ const Sidebar = ({ open, variant, onClose }) => {
   const filteredAdminItems = adminMenuItems.filter(canShowMenuItem);
   const filteredSystemItems = systemMenuItems.filter(canShowMenuItem);
   const filteredReportItems = reportMenuItems.filter(canShowMenuItem);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const res = await listGameTemplates();
+        const items = (res?.data || res || []);
+        const count = items.filter((t) => t.isActive || Number(t.isActive) === 1 || String(t.isActive) === 'true').length;
+        if (mounted) setActiveTemplatesCount(count);
+      } catch (e) {
+        // ignore
+      }
+    };
+    load();
+    return () => { mounted = false; };
+  }, []);
 
   const renderMenuItem = (item) => (
     <ListItem key={item.text} disablePadding sx={{ display: 'block' }}>
@@ -166,7 +205,9 @@ const Sidebar = ({ open, variant, onClose }) => {
             '& svg': { fontSize: 20 },
           }}
         >
-          {item.icon}
+          {(item.path === '/admin/game-templates' && !isMini && activeTemplatesCount > 0)
+            ? (<Badge badgeContent={activeTemplatesCount} color="primary">{item.icon}</Badge>)
+            : item.icon}
         </ListItemIcon>
         {!isMini && (
           <ListItemText
@@ -269,5 +310,7 @@ const Sidebar = ({ open, variant, onClose }) => {
     </Drawer>
   );
 };
+
+
 
 export default Sidebar;

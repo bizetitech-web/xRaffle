@@ -1,21 +1,22 @@
 import { body, param, query } from 'express-validator';
 
-export const createSessionValidator = [
-  body('templateId').isUUID(),
-  body('branchId').optional().isUUID(),
-  body('seed').optional().isString(),
+const allowedStatuses = ['PENDING', 'ACTIVE', 'DRAWING', 'ENDED', 'COMPLETED', 'CANCELLED'];
+
+export const sessionIdParamValidator = [
+  param('sessionId').isUUID(),
 ];
 
 export const listSessionsValidator = [
+  query('companyId').optional().isUUID(),
   query('branchId').optional().isUUID(),
-  query('status').optional().isIn(['PENDING', 'ACTIVE', 'DRAWING', 'COMPLETED', 'CANCELLED']),
-  query('from').optional().isISO8601({ strict: true, strictSeparator: true }),
-  query('to').optional().isISO8601({ strict: true, strictSeparator: true }),
+  query('templateId').optional().isUUID(),
+  query('status').optional().isIn(allowedStatuses),
 ];
 
-export const sessionIdValidator = [param('sessionId').isUUID()];
+export const createSessionValidator = [
+  body('templateId').isUUID(),
+];
 
-export const commandWithVersionValidator = [
-  ...sessionIdValidator,
-  body('expectedVersion').optional().isInt({ gt: 0 }),
+export const expectedVersionValidator = [
+  body('expectedVersion').optional().isInt({ min: 1 }),
 ];

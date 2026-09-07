@@ -2,6 +2,10 @@ import { body, param, query } from 'express-validator';
 
 const sessionIdValidator = [param('sessionId').isUUID()];
 
+export const listPrizesValidator = [
+  ...sessionIdValidator,
+];
+
 export const listCardsValidator = [
   ...sessionIdValidator,
   query('status').optional().isIn(['AVAILABLE', 'SOLD', 'WINNER', 'CLAIMED']),

@@ -26,16 +26,16 @@ const Dashboard = () => {
     {
       label: 'Branch Daily',
       path: '/admin/reports/branch-daily',
-      allowed: hasPermission('VIEW_REPORTS'),
+      allowed: hasPermission('VIEW_DAILY_REPORTS'),
     },
     {
       label: 'Company Wallet',
       path: '/admin/reports/company-wallet',
-      allowed: hasPermission('VIEW_REPORTS'),
+      allowed: hasPermission('VIEW_DAILY_REPORTS'),
     },
   ].filter((item) => item.allowed);
 
-  const adminLinks = [
+  const quickLinks = [
     {
       label: 'Manage Users',
       path: '/admin/users',
@@ -54,7 +54,27 @@ const Dashboard = () => {
     {
       label: 'Branches',
       path: '/admin/branches',
-      allowed: hasPermission('MANAGE_HOTELS'),
+      allowed: hasPermission('MANAGE_HOTEL'),
+    },
+    {
+      label: 'Wallets',
+      path: '/admin/wallets',
+      allowed: hasPermission('VIEW_WALLET'),
+    },
+    {
+      label: 'Games',
+      path: '/admin/games',
+      allowed: hasPermission('VIEW_GAMES'),
+    },
+    {
+      label: 'Game Templates',
+      path: '/admin/game-templates',
+      allowed: hasPermission('MANAGE_GAMES'),
+    },
+    {
+      label: 'Fee Templates',
+      path: '/admin/hotel-charge-templates',
+      allowed: hasPermission('MANAGE_FEE_TEMPLATES'),
     },
   ].filter((item) => item.allowed);
 
@@ -150,11 +170,11 @@ const Dashboard = () => {
           <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 1.5 }}>
-                Administration
+                Quick Links
               </Typography>
-              {adminLinks.length > 0 ? (
+              {quickLinks.length > 0 ? (
                 <Stack spacing={1}>
-                  {adminLinks.map((link) => (
+                  {quickLinks.map((link) => (
                     <Button
                       key={link.path}
                       variant="text"
@@ -166,7 +186,7 @@ const Dashboard = () => {
                   ))}
                 </Stack>
               ) : (
-                <Alert severity="info">No admin pages are available for your role.</Alert>
+                <Alert severity="info">No quick links are available for your role.</Alert>
               )}
             </CardContent>
           </Card>

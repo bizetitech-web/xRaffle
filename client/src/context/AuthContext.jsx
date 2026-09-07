@@ -5,8 +5,11 @@ import { jwtDecode } from 'jwt-decode';
 const AuthContext = createContext();
 
 const PERMISSION_ALIASES = {
-  MANAGE_HOTELS: ['MANAGE_HOTELS', 'MANAGE_ORGANIZATIONS'],
-  MANAGE_ORGANIZATIONS: ['MANAGE_ORGANIZATIONS', 'MANAGE_HOTELS'],
+  MANAGE_HOTELS: ['MANAGE_HOTELS', 'MANAGE_HOTEL', 'MANAGE_ORGANIZATIONS'],
+  MANAGE_ORGANIZATIONS: ['MANAGE_ORGANIZATIONS', 'MANAGE_HOTELS', 'MANAGE_HOTEL'],
+  MANAGE_HOTEL: ['MANAGE_HOTEL', 'MANAGE_HOTELS', 'MANAGE_ORGANIZATIONS'],
+  VIEW_DAILY_REPORTS: ['VIEW_DAILY_REPORTS', 'VIEW_REPORTS'],
+  VIEW_REPORTS: ['VIEW_REPORTS', 'VIEW_DAILY_REPORTS'],
 };
 
 const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
@@ -83,8 +86,7 @@ export const AuthProvider = ({ children }) => {
       setAuthToken(token);
       setUser(user);
       setPermissions(user.permissions || []);
-      
-      return { success: true };
+      return { success: true, user };
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
       return { success: false, error: err.response?.data?.error };

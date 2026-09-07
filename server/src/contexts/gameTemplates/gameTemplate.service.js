@@ -1,316 +1,181 @@
+import { validationResult } from 'express-validator';
 import { AppError } from '../../core/errors/AppError.js';
 import { ErrorCodes } from '../../core/errors/errorCodes.js';
-import { withTransaction } from '../../core/db/transaction.js';
 import pool from '../../../config/database.js';
-import { ensureBranchScope } from '../../core/policy/scopePolicy.js';
+import { withTransaction } from '../../core/db/transaction.js';
 import { gameTemplateRepository } from './gameTemplate.repository.js';
-import { randomUUID } from 'node:crypto';
-
-const ensurePrizeShape = (prizes = []) => {
-  if (!Array.isArray(prizes) || prizes.length === 0) {
-    throw AppError.validation('At least one prize row is required.');
-  }
-
-  const seen = new Set();
-  for (const item of prizes) {
-    if (seen.has(item.drawPosition)) {
-      throw AppError.validation('Duplicate draw positions are not allowed.');
-    }
-    seen.add(item.drawPosition);
-  }
-};
-
-const validateTemplateMath = ({ totalNumbersPool, numbersPerCard, totalPrizeBeers, prizes }) => {
-  if (Number(numbersPerCard) > Number(totalNumbersPool)) {
-    throw AppError.validation('numbersPerCard cannot exceed totalNumbersPool.');
-  }
-
-  const prizeTotal = prizes.reduce((sum, item) => sum + Number(item.beerQuantity || 0), 0);
-  if (prizeTotal !== Number(totalPrizeBeers)) {
-    throw AppError.validation('Prize beer sum must equal totalPrizeBeers.', {
-      expected: Number(totalPrizeBeers),
-      actual: prizeTotal,
-      code: ErrorCodes.TEMPLATE_INVALID_PRIZE_SUM,
-    });
-  }
-};
-
-const generateTemplateCode = () => {
-  const stamp = Date.now().toString(36).toUpperCase();
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `TPL-${stamp}-${rand}`;
-};
-
-const toBool = (value) => {
-  if (value === undefined) {
-    return undefined;
-  }
-  return String(value) === 'true';
-};
-
-const buildSequentialCards = (totalCards, numbersPerCard, totalNumbersPool) => {
-  const cards = [];
-  let cursor = 1;
-
-  for (let i = 0; i < totalCards; i += 1) {
-    const numbers = [];
-    for (let p = 0; p < numbersPerCard; p += 1) {
-      numbers.push(cursor);
-      cursor += 1;
-      if (cursor > totalNumbersPool) {
-        cursor = 1;
-      }
-    }
-    cards.push({ cardNumber: i + 1, numbers });
-  }
-
-  return cards;
-};
-
-const createSeededRng = (seedInput) => {
-  let h = 2166136261;
-  const text = String(seedInput || '');
-  for (let i = 0; i < text.length; i += 1) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-
-  let state = h >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-const buildRandomCards = (totalCards, numbersPerCard, totalNumbersPool, seed = '') => {
-  const cards = [];
-  const rng = createSeededRng(seed || Date.now());
-
-  for (let i = 0; i < totalCards; i += 1) {
-    const picked = new Set();
-    while (picked.size < numbersPerCard) {
-      picked.add(1 + Math.floor(rng() * totalNumbersPool));
-    }
-    cards.push({
-      cardNumber: i + 1,
-      numbers: Array.from(picked).sort((a, b) => a - b),
-    });
-  }
-
-  return cards;
-};
 
 export class GameTemplateService {
   async createTemplate(req) {
-    const {
-      companyId: requestedCompanyId,
-      branchId,
-      templateCode,
-      title,
-      cardPrice,
-      totalCards,
-      totalNumbersPool,
-      numbersPerCard,
-      totalPrizeBeers,
-      secondsPerCall,
-      generationMode,
-      prizes,
-    } = req.body;
-
-    ensurePrizeShape(prizes);
-    validateTemplateMath({ totalNumbersPool, numbersPerCard, totalPrizeBeers, prizes });
-
-    const isSuperAdmin = req.user?.role_level === 1;
-    const companyId = isSuperAdmin
-      ? (requestedCompanyId || req.hotelCompanyId)
-      : req.hotelCompanyId;
-
-    if (!companyId) {
-      throw AppError.validation('companyId could not be resolved for template create.');
+    const result = validationResult(req);
+    if (!result.isEmpty()) {
+      throw AppError.validation('Invalid request payload', result.array());
     }
 
-    let scopedBranch = null;
-    if (branchId) {
-      scopedBranch = await ensureBranchScope(req, branchId);
-      if (scopedBranch.company_id !== companyId) {
-        throw AppError.forbidden(
-          'Branch company does not match template company.',
-          ErrorCodes.BRANCH_SCOPE_VIOLATION
-        );
-      }
+    const payload = req.body;
+    const resolvedCompanyId = payload.companyId || req.hotelCompanyId || null;
+    if (!resolvedCompanyId) {
+      throw AppError.validation('companyId is required');
     }
+    const id = req.body.id || null;
 
     return withTransaction(async (connection) => {
-      const created = await gameTemplateRepository.create(connection, {
-        id: randomUUID(),
-        companyId,
-        branchId: scopedBranch?.id || null,
-        templateCode: templateCode || generateTemplateCode(),
-        title,
-        cardPrice: Number(cardPrice),
-        totalCards: Number(totalCards),
-        totalNumbersPool: Number(totalNumbersPool),
-        numbersPerCard: Number(numbersPerCard),
-        totalPrizeBeers: Number(totalPrizeBeers),
-        secondsPerCall: Number(secondsPerCall),
-        generationMode,
-        createdBy: req.user.sub,
+      const [[uuidRow]] = await connection.query('SELECT UUID() AS id');
+      const newId = id || uuidRow.id;
+
+      const shouldSetDefault = Boolean(payload.isDefault);
+      if (shouldSetDefault) {
+        await gameTemplateRepository.clearDefaultForCompany(connection, resolvedCompanyId, newId);
+      } else {
+        const existingDefault = await gameTemplateRepository.findDefaultTemplateByCompany(connection, resolvedCompanyId);
+        if (!existingDefault) {
+          payload.isDefault = true;
+          await gameTemplateRepository.clearDefaultForCompany(connection, resolvedCompanyId, newId);
+        }
+      }
+
+      const created = await gameTemplateRepository.createTemplate(connection, {
+        id: newId,
+        companyId: resolvedCompanyId,
+        branchId: payload.branchId,
+        templateCode: payload.templateCode,
+        title: payload.title,
+        cardPrice: payload.cardPrice,
+        totalCards: payload.totalCards,
+        totalNumbersPool: payload.totalNumbersPool,
+        numbersPerCard: payload.numbersPerCard,
+        secondsPerCall: payload.secondsPerCall || 5,
+        generationMode: payload.generationMode || 'RANDOM',
+        isDefault: Boolean(payload.isDefault),
+        totalPrizeBeers: payload.totalPrizeBeers || 0,
+        prizes: payload.prizes || [],
+        createdBy: req.user?.sub,
       });
 
-      await gameTemplateRepository.replacePrizes(connection, created.id, prizes);
-      return gameTemplateRepository.findById(connection, created.id);
+      if (!created) {
+        throw new AppError('Failed to create template', { status: 500, code: ErrorCodes.INTERNAL_ERROR });
+      }
+
+      return { templateId: newId };
     });
   }
 
   async listTemplates(req) {
-    const isSuperAdmin = req.user?.role_level === 1;
     const filters = {
-      companyId: isSuperAdmin ? req.query.companyId : req.hotelCompanyId,
+      companyId: req.query.companyId,
       branchId: req.query.branchId,
-      active: toBool(req.query.active),
+      isActive: req.query.isActive === undefined ? undefined : String(req.query.isActive) === 'true',
+      isDefault: req.query.isDefault === undefined ? undefined : String(req.query.isDefault) === 'true',
     };
-
-    const items = await gameTemplateRepository.list(pool, filters);
-    return {
-      total: items.length,
-      items,
-    };
+    return gameTemplateRepository.listTemplates(pool, filters);
   }
 
   async getTemplate(req) {
-    const template = await gameTemplateRepository.findById(pool, req.params.templateId);
+    const template = await gameTemplateRepository.findTemplate(pool, req.params.templateId);
     if (!template) {
-      throw AppError.notFound('Game template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
-    }
-
-    const isSuperAdmin = req.user?.role_level === 1;
-    if (!isSuperAdmin && template.companyId !== req.hotelCompanyId) {
-      throw AppError.forbidden('Access denied', ErrorCodes.ACCESS_DENIED);
+      throw AppError.notFound('Template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
     }
 
     return template;
   }
 
   async updateTemplate(req) {
-    const templateId = req.params.templateId;
-    const {
-      expectedVersion,
-      title,
-      cardPrice,
-      totalCards,
-      totalNumbersPool,
-      numbersPerCard,
-      totalPrizeBeers,
-      secondsPerCall,
-      generationMode,
-      branchId,
-      prizes,
-    } = req.body;
+    const result = validationResult(req);
+    if (!result.isEmpty()) {
+      throw AppError.validation('Invalid request payload', result.array());
+    }
 
     return withTransaction(async (connection) => {
-      const existing = await gameTemplateRepository.findById(connection, templateId);
-      if (!existing) {
-        throw AppError.notFound('Game template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
+      const existing = await gameTemplateRepository.findTemplate(connection, req.params.templateId);
+      if (!existing) throw AppError.notFound('Template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
+
+      const shouldSetDefault = req.body.isDefault === true;
+      if (shouldSetDefault) {
+        await gameTemplateRepository.clearDefaultForCompany(connection, existing.companyId, req.params.templateId);
       }
 
-      const isSuperAdmin = req.user?.role_level === 1;
-      if (!isSuperAdmin && existing.companyId !== req.hotelCompanyId) {
-        throw AppError.forbidden('Access denied', ErrorCodes.ACCESS_DENIED);
-      }
+      const updated = await gameTemplateRepository.updateTemplate(connection, req.params.templateId, req.body);
+      if (!updated) throw AppError.notFound('Template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
 
-      if (expectedVersion && Number(expectedVersion) !== Number(existing.version)) {
-        throw AppError.conflict('Template version mismatch', ErrorCodes.VERSION_CONFLICT, {
-          expectedVersion: Number(expectedVersion),
-          currentVersion: Number(existing.version),
-        });
-      }
-
-      const merged = {
-        totalNumbersPool: totalNumbersPool !== undefined ? Number(totalNumbersPool) : Number(existing.totalNumbersPool),
-        numbersPerCard: numbersPerCard !== undefined ? Number(numbersPerCard) : Number(existing.numbersPerCard),
-        totalPrizeBeers: totalPrizeBeers !== undefined ? Number(totalPrizeBeers) : Number(existing.totalPrizeBeers),
-        prizes: prizes || existing.prizes,
-      };
-
-      if (prizes) {
-        ensurePrizeShape(prizes);
-      }
-
-      validateTemplateMath(merged);
-
-      if (branchId) {
-        const branch = await ensureBranchScope(req, branchId);
-        if (branch.company_id !== existing.companyId) {
-          throw AppError.forbidden(
-            'Branch company does not match template company.',
-            ErrorCodes.BRANCH_SCOPE_VIOLATION
-          );
+      if (updated.isDefault !== true && updated.isDefault !== 1) {
+        const hasDefault = await gameTemplateRepository.findDefaultTemplateByCompany(connection, updated.companyId);
+        if (!hasDefault) {
+          await gameTemplateRepository.updateTemplate(connection, req.params.templateId, { isDefault: true });
+          return gameTemplateRepository.findTemplate(connection, req.params.templateId);
         }
       }
 
-      await gameTemplateRepository.update(connection, templateId, {
-        title,
-        cardPrice: cardPrice !== undefined ? Number(cardPrice) : undefined,
-        totalCards: totalCards !== undefined ? Number(totalCards) : undefined,
-        totalNumbersPool: totalNumbersPool !== undefined ? Number(totalNumbersPool) : undefined,
-        numbersPerCard: numbersPerCard !== undefined ? Number(numbersPerCard) : undefined,
-        totalPrizeBeers: totalPrizeBeers !== undefined ? Number(totalPrizeBeers) : undefined,
-        secondsPerCall: secondsPerCall !== undefined ? Number(secondsPerCall) : undefined,
-        generationMode,
-        branchId: branchId !== undefined ? branchId : undefined,
-        updatedBy: req.user.sub,
-      });
-
-      if (prizes) {
-        await gameTemplateRepository.replacePrizes(connection, templateId, prizes);
-      }
-
-      return gameTemplateRepository.findById(connection, templateId);
+      return updated;
     });
+  }
+
+  async generatePreview(req) {
+    const result = validationResult(req);
+    if (!result.isEmpty()) {
+      throw AppError.validation('Invalid request payload', result.array());
+    }
+
+    const template = await gameTemplateRepository.findTemplate(pool, req.params.templateId);
+    if (!template) {
+      throw AppError.notFound('Template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
+    }
+
+    const opts = {
+      template,
+      totalCards: req.body.totalCards,
+      numbersPerCard: req.body.numbersPerCard,
+      totalNumbersPool: req.body.totalNumbersPool,
+      generationMode: req.body.generationMode,
+    };
+
+    return gameTemplateRepository.generatePreview(opts);
+  }
+
+  async generatePreviewDraft(req) {
+    const result = validationResult(req);
+    if (!result.isEmpty()) {
+      throw AppError.validation('Invalid request payload', result.array());
+    }
+
+    const opts = {
+      template: {
+        totalCards: req.body.totalCards,
+        numbersPerCard: req.body.numbersPerCard,
+        totalNumbersPool: req.body.totalNumbersPool,
+        generationMode: req.body.generationMode,
+      },
+      totalCards: req.body.totalCards,
+      numbersPerCard: req.body.numbersPerCard,
+      totalNumbersPool: req.body.totalNumbersPool,
+      generationMode: req.body.generationMode,
+    };
+
+    return gameTemplateRepository.generatePreview(opts);
   }
 
   async archiveTemplate(req) {
     const templateId = req.params.templateId;
-
     return withTransaction(async (connection) => {
-      const existing = await gameTemplateRepository.findById(connection, templateId);
-      if (!existing) {
-        throw AppError.notFound('Game template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
+      const existing = await gameTemplateRepository.findTemplate(connection, templateId);
+      if (!existing) throw AppError.notFound('Template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
+
+      const archived = await gameTemplateRepository.archiveTemplate(connection, templateId, req.user?.sub || null);
+      if (!archived) throw AppError.notFound('Template not found', ErrorCodes.TEMPLATE_NOT_FOUND);
+
+      if (Number(existing.isDefault) === 1) {
+        const [nextTemplate] = await gameTemplateRepository.listTemplates(connection, {
+          companyId: existing.companyId,
+          isActive: true,
+        });
+
+        if (nextTemplate && nextTemplate.id) {
+          await gameTemplateRepository.clearDefaultForCompany(connection, existing.companyId, nextTemplate.id);
+          await gameTemplateRepository.updateTemplate(connection, nextTemplate.id, { isDefault: true });
+        }
       }
 
-      const isSuperAdmin = req.user?.role_level === 1;
-      if (!isSuperAdmin && existing.companyId !== req.hotelCompanyId) {
-        throw AppError.forbidden('Access denied', ErrorCodes.ACCESS_DENIED);
-      }
-
-      return gameTemplateRepository.archive(connection, templateId, req.user.sub);
+      return archived;
     });
-  }
-
-  async previewCards(req) {
-    const template = await this.getTemplate(req);
-
-    const mode = req.body.mode || template.generationMode;
-    const totalCards = Number(req.body.totalCards || template.totalCards);
-    const numbersPerCard = Number(template.numbersPerCard);
-    const totalNumbersPool = Number(template.totalNumbersPool);
-
-    const cards = mode === 'SEQUENTIAL'
-      ? buildSequentialCards(totalCards, numbersPerCard, totalNumbersPool)
-      : buildRandomCards(totalCards, numbersPerCard, totalNumbersPool, req.body.seed);
-
-    return {
-      templateId: template.id,
-      mode,
-      totalCards,
-      cards,
-      duplicateValidationSummary: {
-        duplicateWithinCard: 0,
-      },
-    };
   }
 }
 

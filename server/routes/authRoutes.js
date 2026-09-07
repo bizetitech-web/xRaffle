@@ -3,6 +3,7 @@ import { body } from 'express-validator';
 import { login, getProfile, updateProfile } from '../controllers/authController.js';
 import { authenticate } from '../middleware/auth.js';
 import { handleValidationErrors } from '../middleware/validation.js';
+import { authLoginRateLimiter } from '../src/core/http/rateLimiters.js';
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ const updateProfileValidation = [
 ];
 
 // Routes
-router.post('/login', loginValidation, handleValidationErrors, login);
+router.post('/login', authLoginRateLimiter, loginValidation, handleValidationErrors, login);
 router.get('/profile', authenticate, getProfile);
 router.put('/profile', authenticate, updateProfileValidation, handleValidationErrors, updateProfile);
 

@@ -14,6 +14,7 @@ const makeReq = ({
   expectedVersion,
   body = {},
   query = {},
+  idempotencyKey = null,
 } = {}) => ({
   params: { sessionId },
   body: expectedVersion === undefined ? body : { ...body, expectedVersion },
@@ -23,6 +24,7 @@ const makeReq = ({
     sub: 'user-1',
   },
   hotelCompanyId,
+  idempotencyKey,
 });
 
 const withMockedBoard = async (run) => {
@@ -42,6 +44,7 @@ const withMockedBoard = async (run) => {
     commit: async () => {},
     rollback: async () => {},
     release: () => {},
+    query: async () => [[]],
   };
 
   pool.getConnection = async () => connection;
@@ -146,6 +149,11 @@ test('sellCard returns sold card state and updated totals', async () => {
 
       boardRepository.sellCard = async () => ({
         skipped: false,
+        sale: {
+          saleId: 'sale-1',
+          paymentMethod: 'CASH',
+          amount: 100,
+        },
         card: {
           cardId: 'card-1',
           cardNumber: 4,
@@ -164,8 +172,10 @@ test('sellCard returns sold card state and updated totals', async () => {
 
       assert.deepEqual(result, {
         cardState: 'SOLD',
+        saleId: 'sale-1',
         cardId: 'card-1',
         cardNumber: 4,
+        paymentMethod: 'CASH',
         totals: {
           available: 99,
           sold: 1,
@@ -187,6 +197,117 @@ test('sellCard returns sold card state and updated totals', async () => {
   } finally {
     realtimeGateway.emitBoardEvent = originalEmitBoardEvent;
   }
+});
+
+test('sellCard idempotency replay returns persisted payload and skips duplicate write', async () => {
+  await withMockedBoard(async ({ connection }) => {
+    let reservedRequestHash = null;
+
+    boardRepository.findSession = async () => ({
+      id: 'session-1',
+      companyId: 'co-1',
+      status: 'ACTIVE',
+      cardPrice: 100,
+      version: 5,
+    });
+
+    boardRepository.sellCard = async () => {
+      throw new Error('sellCard repository should not execute for replay');
+    };
+
+    connection.query = async (sql, params = []) => {
+      const normalized = String(sql || '').toUpperCase().replace(/\s+/g, ' ').trim();
+
+      if (normalized.startsWith('INSERT INTO WALLET_IDEMPOTENCY_REQUESTS')) {
+        reservedRequestHash = params[3];
+        return [{}];
+      }
+
+      if (normalized.includes('FROM WALLET_IDEMPOTENCY_REQUESTS') && normalized.includes('FOR UPDATE')) {
+        return [[{
+          id: 'idem-row-1',
+          requestHash: reservedRequestHash,
+          responseCode: 201,
+          responseBody: JSON.stringify({
+            cardState: 'SOLD',
+            cardId: 'card-1',
+            cardNumber: 4,
+            totals: {
+              available: 99,
+              sold: 1,
+              winner: 0,
+              claimed: 0,
+              revenue: 100,
+            },
+            version: 6,
+            idempotencyStatus: 'new',
+          }),
+          status: 'COMPLETED',
+        }]];
+      }
+
+      return [[]];
+    };
+
+    const result = await boardService.sellCard(makeReq({
+      expectedVersion: 5,
+      body: { cardNumber: 4 },
+      idempotencyKey: 'sell-replay-key-001',
+    }));
+
+    assert.equal(result.cardState, 'SOLD');
+    assert.equal(result.cardNumber, 4);
+    assert.equal(result.idempotencyStatus, 'replay');
+    assert.equal(result.version, 6);
+  });
+});
+
+test('sellCard idempotency rejects payload conflict for same key', async () => {
+  await withMockedBoard(async ({ connection }) => {
+    let reservedRequestHash = null;
+
+    boardRepository.findSession = async () => ({
+      id: 'session-1',
+      companyId: 'co-1',
+      status: 'ACTIVE',
+      cardPrice: 100,
+      version: 5,
+    });
+
+    connection.query = async (sql, params = []) => {
+      const normalized = String(sql || '').toUpperCase().replace(/\s+/g, ' ').trim();
+
+      if (normalized.startsWith('INSERT INTO WALLET_IDEMPOTENCY_REQUESTS')) {
+        reservedRequestHash = params[3];
+        return [{}];
+      }
+
+      if (normalized.includes('FROM WALLET_IDEMPOTENCY_REQUESTS') && normalized.includes('FOR UPDATE')) {
+        return [[{
+          id: 'idem-row-1',
+          requestHash: `${reservedRequestHash}-mismatch`,
+          responseCode: null,
+          responseBody: null,
+          status: 'PENDING',
+        }]];
+      }
+
+      return [[]];
+    };
+
+    await assert.rejects(
+      () => boardService.sellCard(makeReq({
+        expectedVersion: 5,
+        body: { cardNumber: 4 },
+        idempotencyKey: 'sell-conflict-key-001',
+      })),
+      (error) => {
+        assert.equal(error.status, 409);
+        assert.equal(error.code, 'IDEMPOTENCY_KEY_CONFLICT');
+        return true;
+      }
+    );
+  });
 });
 
 test('bulkAction returns processed and skipped counts', async () => {

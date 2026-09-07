@@ -10,11 +10,14 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { logError, logInfo } from './utils/logger.js';
 // Import admin routes
 import adminRoutes from './routes/adminRoutes.js';
-import gameRoutes from './routes/gameRoutes.js';
 import winnerRoutes from './routes/winnerRoutes.js';
 import reportRoutes from './routes/reportRoutes.js';
+
+import onboardingRoutes from './src/routes/onboarding/index.js';
 import phase1ContextRouter from './src/contexts/index.js';
 import { realtimeGateway } from './src/contexts/realtime/realtime.gateway.js';
+import { readRealtimeOutboxOperationalMetrics } from './src/contexts/realtime/realtime.outbox.js';
+// card queue initialization removed along with game module/DLQ monitor
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -58,7 +61,7 @@ validateEnvironment();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:5173')
+const corsOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -79,9 +82,11 @@ testConnection();
 // Add admin routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/games', gameRoutes);
 app.use('/api/winners', winnerRoutes);
 app.use('/api/reports', reportRoutes);
+
+// Onboarding API routes
+app.use('/api/onboarding', onboardingRoutes);
 app.use('/api', phase1ContextRouter);
 
 // Health check
@@ -164,4 +169,165 @@ server.listen(PORT, () => {
       app: `http://localhost:${PORT}/`,
     },
   });
+  // background workers/queues removed per configuration
+});
+
+async function readLatestWalletReconciliationMetrics() {
+  try {
+    const [[row]] = await pool.query(
+      `SELECT id, status, mismatch_count AS mismatchCount, started_at AS startedAt, finished_at AS finishedAt
+       FROM wallet_reconciliation_runs
+       ORDER BY started_at DESC
+       LIMIT 1`
+    );
+
+    if (!row) {
+      return {
+        mismatchCount: 0,
+        statusFail: 0,
+        ageSeconds: 0,
+      };
+    }
+
+    const referenceTime = row.finishedAt || row.startedAt;
+    const ageSeconds = referenceTime
+      ? Math.max(0, Math.floor((Date.now() - new Date(referenceTime).getTime()) / 1000))
+      : 0;
+
+    return {
+      mismatchCount: Number(row.mismatchCount || 0),
+      statusFail: String(row.status || '').toUpperCase() === 'FAIL' ? 1 : 0,
+      ageSeconds,
+    };
+  } catch (error) {
+    return {
+      mismatchCount: 0,
+      statusFail: 0,
+      ageSeconds: 0,
+      error,
+    };
+  }
+}
+
+async function readLatestRealtimeOutboxMetrics() {
+  try {
+    return await readRealtimeOutboxOperationalMetrics({ dbPool: pool, lookbackHours: 1 });
+  } catch (error) {
+    return {
+      pendingCount: 0,
+      failedCount: 0,
+      deadLetterCount: 0,
+      avgPublishLatencySeconds: 0,
+      failureRate: 0,
+      error,
+    };
+  }
+}
+
+// Prometheus-compatible metrics endpoint — prefers `prom-client` if installed
+app.get('/metrics', async (req, res) => {
+  try {
+    const reconciliationMetrics = await readLatestWalletReconciliationMetrics();
+    const outboxMetrics = await readLatestRealtimeOutboxMetrics();
+
+    // If prom-client is available and cardQueue registered metrics, return the registry
+    try {
+      const prom = await import('prom-client');
+      // collect default metrics if not already
+      try {
+        prom.collectDefaultMetrics({ register: prom.register });
+      } catch (e) {}
+
+      const ensureGauge = (name, help) => {
+        const existing = prom.register.getSingleMetric(name);
+        if (existing) return existing;
+        return new prom.Gauge({ name, help, registers: [prom.register] });
+      };
+
+      ensureGauge(
+        'xraffle_wallet_reconciliation_latest_mismatch_count',
+        'Mismatch count from the latest wallet reconciliation run'
+      ).set(Number(reconciliationMetrics.mismatchCount || 0));
+
+      ensureGauge(
+        'xraffle_wallet_reconciliation_latest_status_fail',
+        'Latest wallet reconciliation status encoded as fail=1, pass/other=0'
+      ).set(Number(reconciliationMetrics.statusFail || 0));
+
+      ensureGauge(
+        'xraffle_wallet_reconciliation_latest_run_age_seconds',
+        'Age in seconds of latest wallet reconciliation run timestamp'
+      ).set(Number(reconciliationMetrics.ageSeconds || 0));
+
+      ensureGauge(
+        'xraffle_realtime_outbox_pending_count',
+        'Number of pending realtime outbox events waiting to be published'
+      ).set(Number(outboxMetrics.pendingCount || 0));
+
+      ensureGauge(
+        'xraffle_realtime_outbox_failed_count',
+        'Number of failed realtime outbox events waiting for retry'
+      ).set(Number(outboxMetrics.failedCount || 0));
+
+      ensureGauge(
+        'xraffle_realtime_outbox_dead_letter_count',
+        'Number of dead-lettered realtime outbox events'
+      ).set(Number(outboxMetrics.deadLetterCount || 0));
+
+      ensureGauge(
+        'xraffle_realtime_outbox_avg_publish_latency_seconds',
+        'Average latency in seconds from outbox enqueue to publish over lookback window'
+      ).set(Number(outboxMetrics.avgPublishLatencySeconds || 0));
+
+      ensureGauge(
+        'xraffle_realtime_outbox_failure_rate',
+        'Failure rate for realtime outbox processing over lookback window (0..1)'
+      ).set(Number(outboxMetrics.failureRate || 0));
+
+      const metrics = await prom.register.metrics();
+      res.set('Content-Type', prom.register.contentType || 'text/plain; version=0.0.4');
+      return res.send(metrics);
+    } catch (e) {
+      // prom-client not installed — fall back to simple text metrics using in-memory counters
+    }
+
+    // prom-client not installed — return basic process metrics
+    const mem = process.memoryUsage();
+    const lines = [];
+    lines.push('# HELP process_resident_memory_bytes Resident memory size in bytes');
+    lines.push('# TYPE process_resident_memory_bytes gauge');
+    lines.push(`process_resident_memory_bytes ${mem.rss}`);
+    lines.push('# HELP process_heap_used_bytes V8 heap used in bytes');
+    lines.push('# TYPE process_heap_used_bytes gauge');
+    lines.push(`process_heap_used_bytes ${mem.heapUsed}`);
+    lines.push('# HELP xraffle_wallet_reconciliation_latest_mismatch_count Mismatch count from the latest wallet reconciliation run');
+    lines.push('# TYPE xraffle_wallet_reconciliation_latest_mismatch_count gauge');
+    lines.push(`xraffle_wallet_reconciliation_latest_mismatch_count ${Number(reconciliationMetrics.mismatchCount || 0)}`);
+    lines.push('# HELP xraffle_wallet_reconciliation_latest_status_fail Latest wallet reconciliation status encoded as fail=1, pass/other=0');
+    lines.push('# TYPE xraffle_wallet_reconciliation_latest_status_fail gauge');
+    lines.push(`xraffle_wallet_reconciliation_latest_status_fail ${Number(reconciliationMetrics.statusFail || 0)}`);
+    lines.push('# HELP xraffle_wallet_reconciliation_latest_run_age_seconds Age in seconds of latest wallet reconciliation run timestamp');
+    lines.push('# TYPE xraffle_wallet_reconciliation_latest_run_age_seconds gauge');
+    lines.push(`xraffle_wallet_reconciliation_latest_run_age_seconds ${Number(reconciliationMetrics.ageSeconds || 0)}`);
+    lines.push('# HELP xraffle_realtime_outbox_pending_count Number of pending realtime outbox events waiting to be published');
+    lines.push('# TYPE xraffle_realtime_outbox_pending_count gauge');
+    lines.push(`xraffle_realtime_outbox_pending_count ${Number(outboxMetrics.pendingCount || 0)}`);
+    lines.push('# HELP xraffle_realtime_outbox_failed_count Number of failed realtime outbox events waiting for retry');
+    lines.push('# TYPE xraffle_realtime_outbox_failed_count gauge');
+    lines.push(`xraffle_realtime_outbox_failed_count ${Number(outboxMetrics.failedCount || 0)}`);
+    lines.push('# HELP xraffle_realtime_outbox_dead_letter_count Number of dead-lettered realtime outbox events');
+    lines.push('# TYPE xraffle_realtime_outbox_dead_letter_count gauge');
+    lines.push(`xraffle_realtime_outbox_dead_letter_count ${Number(outboxMetrics.deadLetterCount || 0)}`);
+    lines.push('# HELP xraffle_realtime_outbox_avg_publish_latency_seconds Average latency in seconds from outbox enqueue to publish over lookback window');
+    lines.push('# TYPE xraffle_realtime_outbox_avg_publish_latency_seconds gauge');
+    lines.push(`xraffle_realtime_outbox_avg_publish_latency_seconds ${Number(outboxMetrics.avgPublishLatencySeconds || 0)}`);
+    lines.push('# HELP xraffle_realtime_outbox_failure_rate Failure rate for realtime outbox processing over lookback window (0..1)');
+    lines.push('# TYPE xraffle_realtime_outbox_failure_rate gauge');
+    lines.push(`xraffle_realtime_outbox_failure_rate ${Number(outboxMetrics.failureRate || 0)}`);
+    res.set('Content-Type', 'text/plain; version=0.0.4');
+    res.send(lines.join('\n') + '\n');
+  } catch (err) {
+    console.error('Failed to render /metrics', err.message || err);
+    res.status(500).send('error');
+  }
 });

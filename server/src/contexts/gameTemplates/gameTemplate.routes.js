@@ -6,13 +6,7 @@ import { requirePermissions } from '../../core/policy/permissionPolicy.js';
 import { asyncHandler } from '../../core/http/asyncHandler.js';
 import { AppError } from '../../core/errors/AppError.js';
 import { gameTemplateService } from './gameTemplate.service.js';
-import {
-  createTemplateValidator,
-  listTemplatesValidator,
-  previewCardsValidator,
-  templateIdValidator,
-  updateTemplateValidator,
-} from './gameTemplate.validators.js';
+import { createTemplateValidator, listTemplatesValidator, generatePreviewValidator } from './gameTemplate.validators.js';
 
 const router = express.Router();
 
@@ -26,70 +20,50 @@ const assertValid = (req) => {
   }
 };
 
-router.post(
-  '/game-templates',
-  requirePermissions(['MANAGE_GAMES']),
-  createTemplateValidator,
-  asyncHandler(async (req, res) => {
-    assertValid(req);
-    const data = await gameTemplateService.createTemplate(req);
-    res.status(201).json(data);
-  })
-);
+router.post('/game-templates', requirePermissions(['MANAGE_GAMES']), createTemplateValidator, asyncHandler(async (req, res) => {
+  assertValid(req);
+  const data = await gameTemplateService.createTemplate(req);
+  res.status(201).json(data);
+}));
 
-router.get(
-  '/game-templates',
-  requirePermissions(['VIEW_GAMES']),
-  listTemplatesValidator,
-  asyncHandler(async (req, res) => {
-    assertValid(req);
-    const data = await gameTemplateService.listTemplates(req);
-    res.json(data);
-  })
-);
+router.get('/game-templates', requirePermissions(['VIEW_GAMES']), listTemplatesValidator, asyncHandler(async (req, res) => {
+  assertValid(req);
+  const data = await gameTemplateService.listTemplates(req);
+  res.json(data);
+}));
 
-router.get(
-  '/game-templates/:templateId',
-  requirePermissions(['VIEW_GAMES']),
-  templateIdValidator,
-  asyncHandler(async (req, res) => {
-    assertValid(req);
-    const data = await gameTemplateService.getTemplate(req);
-    res.json(data);
-  })
-);
+router.get('/game-templates/:templateId', requirePermissions(['VIEW_GAMES']), asyncHandler(async (req, res) => {
+  const data = await gameTemplateService.getTemplate(req);
+  res.json(data);
+}));
 
-router.put(
-  '/game-templates/:templateId',
-  requirePermissions(['MANAGE_GAMES']),
-  updateTemplateValidator,
-  asyncHandler(async (req, res) => {
-    assertValid(req);
-    const data = await gameTemplateService.updateTemplate(req);
-    res.json(data);
-  })
-);
+router.put('/game-templates/:templateId', requirePermissions(['MANAGE_GAMES']), createTemplateValidator, asyncHandler(async (req, res) => {
+  assertValid(req);
+  const data = await gameTemplateService.updateTemplate(req);
+  res.json(data);
+}));
 
-router.patch(
-  '/game-templates/:templateId/archive',
-  requirePermissions(['MANAGE_GAMES']),
-  templateIdValidator,
-  asyncHandler(async (req, res) => {
-    assertValid(req);
-    const data = await gameTemplateService.archiveTemplate(req);
-    res.json(data);
-  })
-);
+router.post('/game-templates/:templateId/generate-preview', requirePermissions(['MANAGE_GAMES']), generatePreviewValidator, asyncHandler(async (req, res) => {
+  assertValid(req);
+  const data = await gameTemplateService.generatePreview(req);
+  res.json(data);
+}));
 
-router.post(
-  '/game-templates/:templateId/cards/preview',
-  requirePermissions(['MANAGE_GAMES']),
-  previewCardsValidator,
-  asyncHandler(async (req, res) => {
-    assertValid(req);
-    const data = await gameTemplateService.previewCards(req);
-    res.json(data);
-  })
-);
+router.post('/game-templates/preview', requirePermissions(['MANAGE_GAMES']), generatePreviewValidator, asyncHandler(async (req, res) => {
+  assertValid(req);
+  const data = await gameTemplateService.generatePreviewDraft(req);
+  res.json(data);
+}));
+
+router.post('/game-templates/:templateId/cards/preview', requirePermissions(['MANAGE_GAMES']), generatePreviewValidator, asyncHandler(async (req, res) => {
+  assertValid(req);
+  const data = await gameTemplateService.generatePreview(req);
+  res.json(data);
+}));
+
+router.patch('/game-templates/:templateId/archive', requirePermissions(['MANAGE_GAMES']), asyncHandler(async (req, res) => {
+  const data = await gameTemplateService.archiveTemplate(req);
+  res.json(data);
+}));
 
 export default router;

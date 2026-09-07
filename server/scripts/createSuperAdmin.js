@@ -90,6 +90,133 @@ async function ensureSuperAdminRole(connection) {
   return roleId;
 }
 
+async function ensureRolePermissions(connection, roleId) {
+  const requiredPermissions = [
+    {
+      id: '89a386a1-207b-11f1-89b6-a4e078b831cc',
+      name: 'MANAGE_USERS',
+      module: 'admin',
+      description: 'Create, update, and deactivate users',
+    },
+    {
+      id: '89a386a2-207b-11f1-89b6-a4e078b831cc',
+      name: 'MANAGE_ROLES',
+      module: 'admin',
+      description: 'Create and manage roles and role permissions',
+    },
+    {
+      id: '89a386a3-207b-11f1-89b6-a4e078b831cc',
+      name: 'MANAGE_HOTELS',
+      module: 'admin',
+      description: 'Create and update hotels',
+    },
+    {
+      id: '89a386af-207b-11f1-89b6-a4e078b831cc',
+      name: 'MANAGE_FEE_TEMPLATES',
+      module: 'admin',
+      description: 'Manage hotel fee templates',
+    },
+    {
+      id: '89a386b0-207b-11f1-89b6-a4e078b831cc',
+      name: 'MANAGE_HOTEL',
+      module: 'admin',
+      description: 'Manage own hotel scope resources',
+    },
+    {
+      id: '89a386b1-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_DAILY_REPORTS',
+      module: 'reports',
+      description: 'View daily branch and company reports by role scope',
+    },
+    {
+      id: '89a386a4-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_AUDIT_LOGS',
+      module: 'admin',
+      description: 'View audit log entries',
+    },
+    {
+      id: '89a386a5-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_WALLET',
+      module: 'wallet',
+      description: 'View wallet balances and transactions',
+    },
+    {
+      id: '89a386a6-207b-11f1-89b6-a4e078b831cc',
+      name: 'TOPUP_WALLET',
+      module: 'wallet',
+      description: 'Top up company wallet balances',
+    },
+    {
+      id: '89a386a7-207b-11f1-89b6-a4e078b831cc',
+      name: 'MANAGE_GAMES',
+      module: 'games',
+      description: 'Create and configure games',
+    },
+    {
+      id: '89a386a8-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_GAMES',
+      module: 'games',
+      description: 'View games and game details',
+    },
+    {
+      id: '89a386a9-207b-11f1-89b6-a4e078b831cc',
+      name: 'SELL_CARDS',
+      module: 'games',
+      description: 'Sell game cards during active games',
+    },
+    {
+      id: '89a386aa-207b-11f1-89b6-a4e078b831cc',
+      name: 'RUN_DRAWS',
+      module: 'games',
+      description: 'Start and execute game draws',
+    },
+    {
+      id: '89a386ab-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_WINNERS',
+      module: 'games',
+      description: 'View winners for game draws',
+    },
+    {
+      id: '89a386ac-207b-11f1-89b6-a4e078b831cc',
+      name: 'CLAIM_PRIZES',
+      module: 'games',
+      description: 'Claim winner prizes',
+    },
+    {
+      id: '89a386ad-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_REPORTS',
+      module: 'reports',
+      description: 'View branch and company operational reports',
+    },
+    {
+      id: '89a386ae-207b-11f1-89b6-a4e078b831cc',
+      name: 'VIEW_GLOBAL_REPORTS',
+      module: 'reports',
+      description: 'View global cross-company reports',
+    },
+  ];
+
+  for (const permission of requiredPermissions) {
+    const [existingPermission] = await connection.query(
+      'SELECT id FROM permissions WHERE name = ? LIMIT 1',
+      [permission.name]
+    );
+
+    const permissionId = existingPermission.length > 0 ? existingPermission[0].id : permission.id;
+    if (existingPermission.length === 0) {
+      await connection.query(
+        'INSERT INTO permissions (id, name, module, description, created_at) VALUES (?, ?, ?, ?, NOW())',
+        [permissionId, permission.name, permission.module, permission.description]
+      );
+    }
+
+    await connection.query(
+      'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
+      [roleId, permissionId]
+    );
+  }
+}
+
 export async function run() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -120,6 +247,7 @@ export async function run() {
 
     const hotelCompanyId = await getHotelCompanyId(connection, requestedHotelCompanyId);
     const roleId = await ensureSuperAdminRole(connection);
+    await ensureRolePermissions(connection, roleId);
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const [existingUsers] = await connection.query(

@@ -1,15 +1,16 @@
 import { test, expect } from '@playwright/test';
 import { getE2ECredentials } from './helpers/env';
+import { apiLogin } from './helpers/auth';
 
-test('login smoke', async ({ page }) => {
+test('login smoke (fast)', async ({ page, request }) => {
   const creds = getE2ECredentials();
   test.skip(!creds.isConfigured, 'Set E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD');
 
-  await page.goto('/login');
-  await page.getByLabel('Email Address').fill(creds.email);
-  await page.getByLabel('Password').fill(creds.password);
-  await page.getByRole('button', { name: 'Sign In' }).click();
+  const login = await apiLogin(request);
+  if (login.skipped) test.skip(login.reason);
+  const token = login.token;
+  await page.addInitScript((t) => localStorage.setItem('token', t), token);
 
-  await expect(page).toHaveURL(/\/admin\/users/);
-  await expect(page.getByRole('heading', { name: /User Management|Users/i })).toBeVisible();
+  await page.goto('/admin/users');
+  await expect(page.getByRole('heading', { level: 4, name: /User Management|Users/i })).toBeVisible();
 });

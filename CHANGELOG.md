@@ -28,6 +28,10 @@ All notable changes to this project are documented in this file.
 - Shared reports date utility (`client/src/utils/reportsDate.js`) with unit tests (`client/tests/unit/reportsDate.test.js`).
 - CI hardening for reports E2E gating on secrets and Playwright artifact upload on failure.
 - Frontend bundle hardening with route-level lazy loading and Vite manual chunk splitting for React/router/MUI/charts.
+- Phase 6 realtime reliability hardening with transactional realtime outbox (`realtime_event_outbox`) and deferred post-commit event publish hooks.
+- Realtime outbox drain worker/CLI support with configurable retry and dead-letter controls (`REALTIME_OUTBOX_RETRY_BASE_SECONDS`, `REALTIME_OUTBOX_RETRY_MAX_SECONDS`, `REALTIME_OUTBOX_DEAD_LETTER_ATTEMPTS`).
+- Operational observability for realtime outbox via `/metrics` gauges: pending, failed, dead-letter, average publish latency, and failure rate.
+- Integration coverage proving outbox emit callbacks run after commit and do not run on transaction rollback.
 
 ## [2.1.0] - 2026-05-08
 

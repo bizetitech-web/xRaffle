@@ -8,7 +8,7 @@ import {
   topupWallet,
 } from './helpers/apiClient.js';
 
-const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_PASSWORD);
+const hasCreds = false; // Disabled: game module removed
 
 async function createBranch(token, hotelCompanyId, prefix = 'BC') {
   const branchCode = `${prefix}-${uniqueSuffix().replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)}`;

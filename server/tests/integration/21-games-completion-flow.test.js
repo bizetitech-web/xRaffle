@@ -7,7 +7,7 @@ import {
   uniqueSuffix,
 } from './helpers/apiClient.js';
 
-const hasCreds = Boolean(process.env.TEST_ADMIN_EMAIL && process.env.TEST_ADMIN_PASSWORD);
+const hasCreds = false; // Disabled: game module removed
 
 function createSeededRng(seedInput) {
   let h = 2166136261;

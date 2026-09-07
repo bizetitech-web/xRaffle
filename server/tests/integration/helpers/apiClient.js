@@ -4,6 +4,27 @@ export function uniqueSuffix() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export function buildIdempotencyKey(prefix = 'idem') {
+  const safePrefix = String(prefix || 'idem').replace(/[^A-Za-z0-9._:-]/g, '-');
+  return `${safePrefix}-${uniqueSuffix()}`;
+}
+
+export async function apiRequestWithIdempotency(path, {
+  idempotencyKey,
+  idempotencyKeyPrefix = 'idem',
+  headers = {},
+  ...options
+} = {}) {
+  const resolvedIdempotencyKey = idempotencyKey || buildIdempotencyKey(idempotencyKeyPrefix);
+  return apiRequest(path, {
+    ...options,
+    headers: {
+      ...headers,
+      'Idempotency-Key': resolvedIdempotencyKey,
+    },
+  });
+}
+
 export async function apiRequest(path, { method = 'GET', token, body, headers = {} } = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
     method,

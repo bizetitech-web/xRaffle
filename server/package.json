@@ -8,9 +8,18 @@
     "migrate": "node scripts/migrate.js",
     "verify:db": "node scripts/verifyReadiness.js",
     "reset:dev": "node scripts/resetDevDatabase.js --confirm RESET",
+    "reset:seed:init": "node scripts/resetAndSeedInitData.js --confirm RESET_AND_SEED",
     "seed:org": "node scripts/createOrganization.js",
     "seed:super-admin": "node scripts/createSuperAdmin.js",
     "reset:password": "node scripts/updateUserPassword.js",
+    "worker": "node src/worker.js",
+    "realtime:outbox:drain": "node scripts/drainRealtimeOutbox.js",
+    "wallet:idempotency:cleanup": "node scripts/cleanupWalletIdempotency.js",
+    "wallet:reconcile": "node scripts/reconcileWalletBalances.js",
+    "wallet:reconcile:report": "node scripts/reportWalletReconciliationMismatches.js",
+    "wallet:repair": "node scripts/repairWalletBalances.js",
+    "wallet:rollout": "node scripts/walletRolloutBatch.js",
+    "wallet:rollout:dry": "node scripts/walletRolloutBatch.js --dry-run-only",
     "test:integration": "node --test tests/integration/**/*.test.js",
     "test:unit": "node --test tests/unit/**/*.test.js",
     "test:integration:contracts": "node --test tests/integration/2[4-9]-*.test.js"
@@ -28,6 +37,9 @@
     "mysql2": "^3.6.0",
     "socket.io": "^4.8.3",
     "uuid": "^13.0.0"
+    ,"bullmq": "^1.78.0",
+    "ioredis": "^5.3.2",
+    "prom-client": "^14.0.0"
   },
   "devDependencies": {
     "@types/uuid": "^10.0.0",

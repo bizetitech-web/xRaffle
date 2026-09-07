@@ -1,12 +1,42 @@
 import express from 'express';
 import { body, param, query, validationResult } from 'express-validator';
+import { createHash } from 'crypto';
 import { authenticate } from '../middleware/auth.js';
 import { hasPermission, hasRoleLevel, canAccessOrganization } from '../middleware/rbac.js';
 import pool from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
+// Queue/DLQ support removed
 
 const router = express.Router();
+
+const IDEMPOTENCY_KEY_ALLOWED_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const IDEMPOTENCY_KEY_MIN_LENGTH = 8;
+const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
+
+const buildTopupIdempotencyEndpoint = ({ companyId, userId }) =>
+  `POST:/api/admin/wallets/company/:companyId/topups:${companyId}:${userId || 'anonymous'}`;
+
+const buildTopupRequestHash = ({ companyId, amount, paymentMethod, referenceNumber, userId }) => {
+  const requestPayload = {
+    action: 'walletTopup',
+    companyId,
+    amount: Number(amount),
+    paymentMethod,
+    referenceNumber: referenceNumber || null,
+    userId: userId || null,
+  };
+
+  return createHash('sha256').update(JSON.stringify(requestPayload)).digest('hex');
+};
+
+function setIdempotencyHeaders(res, key, status) {
+  if (!key) return;
+  const normalizedStatus = String(status || 'new').toLowerCase() === 'replay' ? 'replay' : 'new';
+  res.set('X-Idempotency-Status', normalizedStatus);
+  res.set('X-Idempotency-Replayed', normalizedStatus === 'replay' ? 'true' : 'false');
+  res.set('X-Idempotency-Key', key);
+}
 
 // All admin routes require authentication and organization access
 router.use(authenticate);
@@ -24,7 +54,7 @@ router.get('/users',
         ? (req.query.hotelCompanyId || req.hotelCompanyId)
         : req.hotelCompanyId;
 
-      let query = `
+      let sql = `
         SELECT 
           u.id, u.email, u.name, u.first_name, u.last_name, 
           u.phone, u.is_active, u.last_login, u.created_at,
@@ -40,20 +70,28 @@ router.get('/users',
       `;
 
       const params = [];
-      
       // Apply organization filter
       if (hotelCompanyId && !isSuperAdmin) {
-        query += ` WHERE u.hotel_company_id = ?`;
+        sql += ` WHERE u.hotel_company_id = ?`;
         params.push(hotelCompanyId);
       } else if (hotelCompanyId && isSuperAdmin) {
-        query += ` WHERE u.hotel_company_id = ?`;
+        sql += ` WHERE u.hotel_company_id = ?`;
         params.push(hotelCompanyId);
       }
 
-      query += ` ORDER BY u.created_at DESC`;
+      sql += ` ORDER BY u.created_at DESC`;
 
-      const [rows] = await pool.query(query, params);
-      
+      // --- LOGGING FOR DEBUGGING ---
+      console.log('Fetch users debug:', {
+        hotelCompanyId,
+        user: req.user,
+        sql,
+        params
+      });
+      // --- END LOGGING ---
+
+      const [rows] = await pool.query(sql, params);
+
       // Get permission counts for each user
       for (let user of rows) {
         if (user.role_id) {
@@ -74,6 +112,94 @@ router.get('/users',
     }
   }
 );
+
+// Secured Prometheus metrics endpoint for admins
+router.get('/metrics',
+  hasPermission(['MANAGE_GAMES']),
+  async (req, res) => {
+    try {
+      try {
+        const prom = await import('prom-client');
+        try { prom.collectDefaultMetrics({ register: prom.register }); } catch (e) {}
+        const metrics = await prom.register.metrics();
+        res.set('Content-Type', prom.register.contentType || 'text/plain; version=0.0.4');
+        return res.send(metrics);
+      } catch (e) {
+        // prom-client not installed — return basic process metrics
+        const mem = process.memoryUsage();
+        const lines = [];
+        lines.push('# HELP process_resident_memory_bytes Resident memory size in bytes');
+        lines.push('# TYPE process_resident_memory_bytes gauge');
+        lines.push(`process_resident_memory_bytes ${mem.rss}`);
+        res.set('Content-Type', 'text/plain; version=0.0.4');
+        return res.send(lines.join('\n') + '\n');
+      }
+    } catch (err) {
+      console.error('Failed to render admin /metrics', err.message || err);
+      res.status(500).json({ error: 'Failed to get metrics' });
+    }
+  }
+);
+
+/**
+ * Branch beer price management
+ * POST /api/admin/branches/:branchId/beer-price
+ * Body: { price: number } (price per beer in ETB integer)
+ */
+router.post('/branches/:branchId/beer-price',
+  param('branchId').isUUID(),
+  hasPermission(['MANAGE_GAMES']),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      const { branchId } = req.params;
+      const price = Number(req.body.price || null);
+      if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'Invalid price' });
+
+      const id = uuidv4();
+      const createdBy = req.user?.sub || null;
+      await pool.query(
+        `INSERT INTO branch_beer_prices (id, branch_id, price, effective_from, created_by, created_at)
+         VALUES (?, ?, ?, NOW(), ?, NOW())`,
+        [id, branchId, price, createdBy]
+      );
+
+      return res.status(201).json({ id, branchId, price });
+    } catch (err) {
+      console.error('Create branch beer price error:', err);
+      return res.status(500).json({ error: 'Failed to create branch beer price' });
+    }
+  }
+);
+
+/**
+ * Per-game beer price override
+ * PATCH /api/admin/games/:gameId/beer-price
+ * Body: { price: number | null } (null clears override)
+ */
+router.patch('/games/:gameId/beer-price',
+  param('gameId').isUUID(),
+  hasPermission(['MANAGE_GAMES']),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      const { gameId } = req.params;
+      const raw = req.body.price;
+      const price = raw === null ? null : Number(raw);
+      if (price !== null && (!Number.isFinite(price) || price <= 0)) return res.status(400).json({ error: 'Invalid price' });
+
+      await pool.query(`UPDATE games SET beer_price = ? WHERE id = ?`, [price, gameId]);
+      return res.json({ gameId, price });
+    } catch (err) {
+      console.error('Set game beer price error:', err);
+      return res.status(500).json({ error: 'Failed to set game beer price' });
+    }
+  }
+);
+
+// DLQ endpoints removed as part of game module/DLQ monitor removal
 
 /**
  * @route   GET /api/admin/users/:id
@@ -479,6 +605,8 @@ router.put('/users/:id',
   }
 );
 
+// DLQ endpoints removed as part of game module/DLQ monitor removal
+
 /**
  * @route   PUT /api/admin/users/:id/status
  * @desc    Activate or deactivate user
@@ -717,7 +845,7 @@ router.post('/roles',
     body('level').isInt({ min: 1, max: 9 }),
     body('description').optional(),
     body('permissions').isArray(),
-    body('permissions.*').isUUID(),
+    body('permissions.*').notEmpty().isString(),
   ],
   async (req, res) => {
     try {
@@ -729,15 +857,19 @@ router.post('/roles',
       const { name, description, level, permissions } = req.body;
       const permissionIds = Array.from(new Set(permissions));
 
+      let permissionRows = [];
       if (permissionIds.length > 0) {
         const placeholders = permissionIds.map(() => '?').join(', ');
-        const [permissionRows] = await pool.query(
-          `SELECT id FROM permissions WHERE id IN (${placeholders})`,
-          permissionIds
+        // Accept either permission IDs or permission names for backwards compatibility
+        const [rows] = await pool.query(
+          `SELECT id, name FROM permissions WHERE id IN (${placeholders}) OR name IN (${placeholders})`,
+          [...permissionIds, ...permissionIds]
         );
+        permissionRows = rows;
 
         if (permissionRows.length !== permissionIds.length) {
-          return res.status(400).json({ error: 'One or more permission IDs are invalid' });
+          console.error('Invalid permission identifiers supplied for role update', { supplied: permissionIds, found: permissionRows.map(r => r.id) });
+          return res.status(400).json({ error: 'One or more permission IDs are invalid', supplied: permissionIds, found: permissionRows.map(r => r.id) });
         }
       }
 
@@ -818,7 +950,7 @@ router.put('/roles/:id',
     body('level').isInt({ min: 1, max: 9 }),
     body('description').optional(),
     body('permissions').isArray(),
-    body('permissions.*').isUUID(),
+    body('permissions.*').notEmpty().isString(),
   ],
   async (req, res) => {
     try {
@@ -831,15 +963,19 @@ router.put('/roles/:id',
       const { name, description, level, permissions } = req.body;
       const permissionIds = Array.from(new Set(permissions));
 
+      let permissionRows = [];
       if (permissionIds.length > 0) {
         const placeholders = permissionIds.map(() => '?').join(', ');
-        const [permissionRows] = await pool.query(
-          `SELECT id FROM permissions WHERE id IN (${placeholders})`,
-          permissionIds
+        // Accept either permission IDs or permission names for backwards compatibility
+        const [rows] = await pool.query(
+          `SELECT id, name FROM permissions WHERE id IN (${placeholders}) OR name IN (${placeholders})`,
+          [...permissionIds, ...permissionIds]
         );
+        permissionRows = rows;
 
         if (permissionRows.length !== permissionIds.length) {
-          return res.status(400).json({ error: 'One or more permission IDs are invalid' });
+          console.error('Invalid permission identifiers supplied for role update', { supplied: permissionIds, found: permissionRows.map(r => r.id) });
+          return res.status(400).json({ error: 'One or more permission IDs are invalid', supplied: permissionIds, found: permissionRows.map(r => r.id) });
         }
       }
 
@@ -871,7 +1007,8 @@ router.put('/roles/:id',
           [id]
         );
 
-        for (const permId of permissionIds) {
+        const permIdsToInsert = (permissionRows || []).map(r => r.id);
+        for (const permId of permIdsToInsert) {
           await connection.query(
             'INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)',
             [id, permId]
@@ -1847,6 +1984,28 @@ router.post('/wallets/company/:companyId/topups',
         return res.status(400).json({ errors: errors.array() });
       }
 
+      const idempotencyKeyRaw = String(req.get('Idempotency-Key') || '').trim();
+      const hasIdempotencyKey = Boolean(idempotencyKeyRaw);
+
+      if (
+        hasIdempotencyKey
+        && (
+          idempotencyKeyRaw.length < IDEMPOTENCY_KEY_MIN_LENGTH
+          || idempotencyKeyRaw.length > IDEMPOTENCY_KEY_MAX_LENGTH
+          || !IDEMPOTENCY_KEY_ALLOWED_PATTERN.test(idempotencyKeyRaw)
+        )
+      ) {
+        return res.status(400).json({
+          error: 'Invalid Idempotency-Key format',
+          code: 'IDEMPOTENCY_KEY_INVALID',
+          constraints: {
+            minLength: IDEMPOTENCY_KEY_MIN_LENGTH,
+            maxLength: IDEMPOTENCY_KEY_MAX_LENGTH,
+            allowedPattern: IDEMPOTENCY_KEY_ALLOWED_PATTERN.source,
+          },
+        });
+      }
+
       const { companyId } = req.params;
       const isSuperAdmin = req.user.role_level === 1;
 
@@ -1858,7 +2017,67 @@ router.post('/wallets/company/:companyId/topups',
       const paymentMethod = String(req.body.paymentMethod || '').toUpperCase();
       const referenceNumber = req.body.referenceNumber || null;
 
+      const idempotencyEndpoint = hasIdempotencyKey
+        ? buildTopupIdempotencyEndpoint({ companyId, userId: req.user?.sub || null })
+        : null;
+      const requestHash = hasIdempotencyKey
+        ? buildTopupRequestHash({ companyId, amount, paymentMethod, referenceNumber, userId: req.user?.sub || null })
+        : null;
+
       await connection.beginTransaction();
+
+      let idempotencyRecord = null;
+      if (hasIdempotencyKey) {
+        await connection.query(
+          `INSERT INTO wallet_idempotency_requests
+            (id, endpoint, idempotency_key, request_hash, request_payload, status, created_at)
+           VALUES (?, ?, ?, ?, ?, 'PENDING', NOW())
+           ON DUPLICATE KEY UPDATE id = id`,
+          [
+            uuidv4(),
+            idempotencyEndpoint,
+            idempotencyKeyRaw,
+            requestHash,
+            JSON.stringify({ companyId, amount, paymentMethod, referenceNumber }),
+          ]
+        );
+
+        const [[record]] = await connection.query(
+          `SELECT id, request_hash AS requestHash, response_code AS responseCode, response_body AS responseBody, status
+           FROM wallet_idempotency_requests
+           WHERE endpoint = ? AND idempotency_key = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [idempotencyEndpoint, idempotencyKeyRaw]
+        );
+
+        if (!record) {
+          await connection.rollback();
+          return res.status(500).json({ error: 'Failed to reserve idempotency key' });
+        }
+
+        if (String(record.requestHash) !== String(requestHash)) {
+          await connection.rollback();
+          return res.status(409).json({
+            error: 'Idempotency-Key was already used with a different request payload',
+            code: 'IDEMPOTENCY_KEY_CONFLICT',
+          });
+        }
+
+        if (record.status === 'COMPLETED' && record.responseBody) {
+          const replayPayload = typeof record.responseBody === 'string'
+            ? JSON.parse(record.responseBody)
+            : record.responseBody;
+          await connection.commit();
+          setIdempotencyHeaders(res, idempotencyKeyRaw, 'replay');
+          return res.status(Number(record.responseCode || 201)).json({
+            ...replayPayload,
+            idempotencyStatus: 'replay',
+          });
+        }
+
+        idempotencyRecord = record;
+      }
 
       const [companyRows] = await connection.query(
         'SELECT id FROM hotel_companies WHERE id = ? LIMIT 1',
@@ -1932,13 +2151,26 @@ router.post('/wallets/company/:companyId/topups',
         [uuidv4(), companyId, req.user.sub, 'TOPUP_WALLET', 'wallet_topups', topupId]
       );
 
-      await connection.commit();
-
-      res.status(201).json({
+      const responsePayload = {
         topupId,
         walletTransactionId,
         newBalance: balanceAfter,
-      });
+      };
+
+      if (idempotencyRecord) {
+        responsePayload.idempotencyStatus = 'new';
+        await connection.query(
+          `UPDATE wallet_idempotency_requests
+           SET status = 'COMPLETED', response_code = 201, response_body = ?, completed_at = NOW()
+           WHERE id = ?`,
+          [JSON.stringify(responsePayload), idempotencyRecord.id]
+        );
+      }
+
+      await connection.commit();
+
+      setIdempotencyHeaders(res, hasIdempotencyKey ? idempotencyKeyRaw : null, 'new');
+      res.status(201).json(responsePayload);
     } catch (error) {
       await connection.rollback();
       console.error('Wallet top-up error:', error);
@@ -2039,10 +2271,10 @@ router.get('/wallets/company/:companyId/transactions',
 /**
  * @route   GET /api/admin/hotel_branches
  * @desc    Get hotel branches (super admin sees all; others restricted to own hotel)
- * @access  Private (requires MANAGE_HOTELS)
+ * @access  Private (requires MANAGE_HOTEL)
  */
 router.get('/hotel_branches',
-  hasPermission(['MANAGE_HOTELS']),
+  hasPermission(['MANAGE_HOTEL']),
   async (req, res) => {
     try {
       const isSuperAdmin = req.user.role_level === 1;
@@ -2075,11 +2307,11 @@ router.get('/hotel_branches',
 /**
  * @route   GET /api/admin/hotel_branches/:id
  * @desc    Get hotel branch by ID
- * @access  Private (requires MANAGE_HOTELS)
+ * @access  Private (requires MANAGE_HOTEL)
  */
 router.get('/hotel_branches/:id',
   param('id').isUUID(),
-  hasPermission(['MANAGE_HOTELS']),
+  hasPermission(['MANAGE_HOTEL']),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -2119,10 +2351,10 @@ router.get('/hotel_branches/:id',
 /**
  * @route   POST /api/admin/hotel_branches
  * @desc    Create hotel branch
- * @access  Private (requires MANAGE_HOTELS)
+ * @access  Private (requires MANAGE_HOTEL)
  */
 router.post('/hotel_branches',
-  hasPermission(['MANAGE_HOTELS']),
+  hasPermission(['MANAGE_HOTEL']),
   [
     body('name').notEmpty().trim(),
     body('branchCode').notEmpty().trim(),
@@ -2213,11 +2445,11 @@ router.post('/hotel_branches',
 /**
  * @route   PUT /api/admin/hotel_branches/:id
  * @desc    Update hotel branch
- * @access  Private (requires MANAGE_HOTELS)
+ * @access  Private (requires MANAGE_HOTEL)
  */
 router.put('/hotel_branches/:id',
   param('id').isUUID(),
-  hasPermission(['MANAGE_HOTELS']),
+  hasPermission(['MANAGE_HOTEL']),
   [
     body('companyId').optional().isUUID(),
     body('status').optional().isIn(['ACTIVE', 'INACTIVE']),
@@ -2339,11 +2571,11 @@ router.put('/hotel_branches/:id',
 /**
  * @route   DELETE /api/admin/hotel_branches/:id
  * @desc    Delete hotel branch
- * @access  Private (requires MANAGE_HOTELS)
+ * @access  Private (requires MANAGE_HOTEL)
  */
 router.delete('/hotel_branches/:id',
   param('id').isUUID(),
-  hasPermission(['MANAGE_HOTELS']),
+  hasPermission(['MANAGE_HOTEL']),
   async (req, res) => {
     try {
       const errors = validationResult(req);

@@ -137,6 +137,165 @@ test('board sell route enforces request validation', async () => {
   }
 });
 
+test('board sell route sets idempotency headers when key is provided', async () => {
+  const restoreQuery = installQueryMock(['SELL_CARDS']);
+
+  try {
+    await withServiceMocks(async () => {
+      const app = makeApp();
+      const server = app.listen(0);
+
+      try {
+        const { port } = server.address();
+        const response = await fetch(`http://127.0.0.1:${port}/game-sessions/${SESSION_ID}/board/sell`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${makeToken()}`,
+            'Idempotency-Key': 'board-sell-idem-001',
+          },
+          body: JSON.stringify({ cardNumber: 1, expectedVersion: 10 }),
+        });
+
+        const body = await response.json();
+        assert.equal(response.status, 201);
+        assert.equal(response.headers.get('x-idempotency-status'), 'replay');
+        assert.equal(response.headers.get('x-idempotency-replayed'), 'true');
+        assert.equal(response.headers.get('x-idempotency-key'), 'board-sell-idem-001');
+        assert.equal(body.idempotencyStatus, 'replay');
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }, {
+      sellCard: async () => ({
+        cardState: 'SOLD',
+        cardId: 'card-1',
+        cardNumber: 1,
+        totals: { available: 24, sold: 1, winner: 0, claimed: 0, revenue: 50 },
+        version: 11,
+        idempotencyStatus: 'replay',
+      }),
+    });
+  } finally {
+    restoreQuery();
+  }
+});
+
+test('board sell route rejects malformed Idempotency-Key', async () => {
+  const restoreQuery = installQueryMock(['SELL_CARDS']);
+
+  try {
+    await withServiceMocks(async () => {
+      const app = makeApp();
+      const server = app.listen(0);
+
+      try {
+        const { port } = server.address();
+        const response = await fetch(`http://127.0.0.1:${port}/game-sessions/${SESSION_ID}/board/sell`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${makeToken()}`,
+            'Idempotency-Key': 'bad key with spaces',
+          },
+          body: JSON.stringify({ cardNumber: 1, expectedVersion: 10 }),
+        });
+
+        const body = await response.json();
+        assert.equal(response.status, 400);
+        assert.equal(body.code, 'VALIDATION_ERROR');
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+  } finally {
+    restoreQuery();
+  }
+});
+
+test('legacy sales adapter returns expected legacy response shape', async () => {
+  const restoreQuery = installQueryMock(['SELL_CARDS']);
+
+  try {
+    await withServiceMocks(async () => {
+      const app = makeApp();
+      const server = app.listen(0);
+
+      try {
+        const { port } = server.address();
+        const response = await fetch(`http://127.0.0.1:${port}/games/${SESSION_ID}/sales`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${makeToken()}`,
+          },
+          body: JSON.stringify({ cardNumber: 1, amount: 50, paymentMethod: 'CASH' }),
+        });
+
+        const body = await response.json();
+        assert.equal(response.status, 201);
+        assert.equal(body.saleId, 'sale-legacy-1');
+        assert.equal(body.cardNumber, 1);
+        assert.equal(body.cardStatus, 'SOLD');
+        assert.equal(body.paymentMethod, 'CASH');
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }, {
+      sellCard: async () => ({
+        saleId: 'sale-legacy-1',
+        cardState: 'SOLD',
+        cardId: 'card-1',
+        cardNumber: 1,
+        paymentMethod: 'CASH',
+        totals: { available: 24, sold: 1, winner: 0, claimed: 0, revenue: 50 },
+        version: 11,
+      }),
+    });
+  } finally {
+    restoreQuery();
+  }
+});
+
+test('legacy sales adapter maps inactive-game conflict to GAME_NOT_ACTIVE (400)', async () => {
+  const restoreQuery = installQueryMock(['SELL_CARDS']);
+
+  try {
+    await withServiceMocks(async () => {
+      const app = makeApp();
+      const server = app.listen(0);
+
+      try {
+        const { port } = server.address();
+        const response = await fetch(`http://127.0.0.1:${port}/games/${SESSION_ID}/sales`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${makeToken()}`,
+          },
+          body: JSON.stringify({ cardNumber: 1, amount: 50, paymentMethod: 'CASH' }),
+        });
+
+        const body = await response.json();
+        assert.equal(response.status, 400);
+        assert.equal(body.code, 'GAME_NOT_ACTIVE');
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    }, {
+      sellCard: async () => {
+        const err = new Error('not active');
+        err.status = 409;
+        err.code = 'SESSION_INVALID_STATE';
+        err.details = { currentStatus: 'PENDING' };
+        throw err;
+      },
+    });
+  } finally {
+    restoreQuery();
+  }
+});
+
 test('board reset route enforces permission middleware', async () => {
   const restoreQuery = installQueryMock(['SELL_CARDS']);
 

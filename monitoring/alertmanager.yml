@@ -1,0 +1,26 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 6h
+  receiver: 'slack'
+
+receivers:
+  - name: 'slack'
+    slack_configs:
+      - # Replace the api_url below with your real Slack Incoming Webhook URL.
+        # DO NOT commit your real webhook to source control. Keep it in a secret
+        # or use Docker secrets / environment-specific mount to provide it.
+        api_url: 'https://hooks.slack.com/services/REPLACE_WITH_YOUR_WEBHOOK'
+        channel: '#alerts'
+        text: "[{{ .Status | toUpper }}] {{ .GroupLabels }}: {{ range .Alerts }} {{ .Annotations.summary }} \n {{ end }}"
+
+  - name: 'pager'
+    webhook_configs:
+      - url: 'http://localhost:5001/'
+        send_resolved: true
+
+templates: []
